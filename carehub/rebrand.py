@@ -459,6 +459,72 @@ EDITS.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# CareHub: "Full width" toggle in the page ... menu, and readable New page errors.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubFullWidth.tsx"] = "src/components/carehub/CareHubFullWidth.tsx"
+
+EDITS.update({
+    "src/components/editor/Editable.tsx": [
+        ("import { cn } from '@/lib/utils';\n",
+         "import { cn } from '@/lib/utils';\nimport { useCarehubFullWidth } from '@/components/carehub/CareHubFullWidth';\n", 1),
+        ("  const editor = useSlate();\n",
+         "  const editor = useSlate();\n"
+         "  const carehubFullWidth = useCarehubFullWidth(previewId ? undefined : viewId);\n"
+         "\n"
+         "  useEffect(() => {\n"
+         "    if (previewId) return;\n"
+         "    let scrollEl: HTMLElement | null = null;\n"
+         "\n"
+         "    try {\n"
+         "      scrollEl = getScrollParent(ReactEditor.toDOMNode(editor, editor)) as HTMLElement | null;\n"
+         "    } catch {\n"
+         "      return;\n"
+         "    }\n"
+         "\n"
+         "    if (!scrollEl) return;\n"
+         "    const el = scrollEl;\n"
+         "\n"
+         "    el.classList.toggle('carehub-full-width', carehubFullWidth);\n"
+         "    return () => {\n"
+         "      el.classList.remove('carehub-full-width');\n"
+         "    };\n"
+         "  }, [editor, previewId, carehubFullWidth]);\n", 1),
+        ("fullWidth ? 'w-full' : 'w-[952px]'", "fullWidth || carehubFullWidth ? 'w-full' : 'w-[952px]'", 2),
+    ],
+    "src/components/app/header/MoreActionsContent.tsx": [
+        ("import { Switch } from '@/components/ui/switch';\n",
+         "import { Switch } from '@/components/ui/switch';\n"
+         "import { CareHubFullWidthIcon, setCarehubFullWidth, useCarehubFullWidth } from '@/components/carehub/CareHubFullWidth';\n", 1),
+        ("  const isLocked = !!view?.is_locked;\n",
+         "  const isLocked = !!view?.is_locked;\n  const carehubFullWidth = useCarehubFullWidth(viewId);\n", 1),
+        ("      <div ref={containerRef} />\n",
+         "      <div ref={containerRef} />\n"
+         "      {isDocument && (\n"
+         "        <DropdownMenuItem\n"
+         "          data-testid={'more-page-full-width'}\n"
+         "          onSelect={(event) => {\n"
+         "            event.preventDefault();\n"
+         "            setCarehubFullWidth(viewId, !carehubFullWidth);\n"
+         "          }}\n"
+         "        >\n"
+         "          <CareHubFullWidthIcon />\n"
+         "          <span className={'flex-1'}>Full width</span>\n"
+         "          <Switch checked={carehubFullWidth} tabIndex={-1} aria-hidden className={'pointer-events-none'} />\n"
+         "        </DropdownMenuItem>\n"
+         "      )}\n", 1),
+    ],
+    "src/components/app/view-actions/NewPage.tsx": [
+        ("        notify.error(error instanceof Error ? error.message : String(error));\n",
+         "        // CareHub: server errors are plain objects; show their message instead of [object Object].\n"
+         "        console.error('[CareHub] New page failed', error);\n"
+         "        notify.error(\n"
+         "          (error as { message?: string } | null)?.message || JSON.stringify(error) || 'Could not create the page'\n"
+         "        );\n", 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():

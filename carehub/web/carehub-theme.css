@@ -259,3 +259,11 @@ body {
   margin-left: 0 !important;
 }
 
+
+/* CareHub: "Full width" pages (toggle in the page ... menu). */
+.carehub-full-width .w-\[952px\],
+.carehub-full-width [style*="width: 952px"],
+.carehub-full-width [data-view-meta-preview] h1 {
+  width: 100% !important;
+  max-width: 100% !important;
+}
