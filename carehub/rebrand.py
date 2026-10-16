@@ -725,5 +725,17 @@ EDITS["src/components/app/header/AppHeader.tsx"] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Sidebar: Favorites and Recent sections (always shown, like the phone layout)
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubQuickAccess.tsx"] = "src/components/carehub/CareHubQuickAccess.tsx"
+
+EDITS["src/components/app/outline/Outline.tsx"] = [
+    ("import { Favorite } from '@/components/app/favorite';\n",
+     "import { CareHubQuickAccess } from '@/components/carehub/CareHubQuickAccess';\n", 1),
+    ("        <Favorite />\n", "        <CareHubQuickAccess />\n", 1),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
