@@ -1,0 +1,52 @@
+clientCompatibility.clientTooOld	This server requires AppFlowy Web {{requiredClientVersion}} or later. You are using {{clientVersion}}. Reload after your administrator updates the web app.
+clientCompatibility.upgradeBoth	This server requires AppFlowy Web {{requiredClientVersion}} or later, but also needs a server upgrade. Please contact your administrator to update both.
+appName	AppFlowy
+signIn.signInWithDiscord	Continue with Discord
+signIn.signUpWithDiscord	Sign up with Discord
+workspace.errorActions.reachOut	Reach out on Discord
+shareAction.publishToTheWebHint	Create a website with AppFlowy
+shareAction.publishOnAppFlowy	Publish on AppFlowy
+chat.input.placeholder	Ask AppFlowy AI
+button.signInDiscord	Continue with Discord
+settings.connections.googleCalendarDescription	Get reminders for upcoming Google Meet meetings and start AI meeting notes while AppFlowy is open.
+settings.connections.popupBlocked	Allow pop-ups for AppFlowy, then try connecting again.
+settings.connections.calendarReminderHint	Keep AppFlowy open for reminders from your primary calendar. Meetings with a Google Meet link can start AI meeting notes.
+settings.manageData.description	Manage your AppFlowy workspace data
+settings.manageData.importWorkspace.tooltip	Create a new workspace from an AppFlowy backup, Notion export, or Confluence space export (HTML or CSV ZIP)
+settings.manageData.backupWorkspace.tooltip	Back up your AppFlowy workspace to a ZIP file
+settings.aiPage.keys.aiSettingsDescription	Choose your preferred model to power AppFlowy AI. Now includes GPT 4-o, Claude 3,5, Llama 3.1, and Mistral 7B
+settings.aiPage.keys.offlineAIDownload1	If you have not downloaded the AppFlowy AI, please
+settings.menu.importAppFlowyDataDescription	Copy data from an external @:appName data folder and import it into the current AppFlowy data folder
+settings.appearance.members.memberLimitExceededProContact	support@appflowy.io
+settings.mobile.joinDiscord	Join us in Discord
+grid.row.richTextRequiresNewerVersion	This text was formatted in a newer version of AppFlowy. Update AppFlowy (refresh this page) to edit it.
+document.plugins.video.invalidVideoUrlYouTube	YouTube is not supported yet.
+document.plugins.video.errorFacebookPrivacy	Facebook video couldn't be loaded. Check privacy settings.
+publish.downloadApp	Download AppFlowy
+publish.createWithAppFlowy	Create a website with AppFlowy
+publish.duplicateSuccessfullyDescription	Don't have AppFlowy installed? The download will start automatically after you click 'Download'.
+web.continueWithDiscord	Continue with Discord
+web.signInAgreement	By clicking "Continue" above, you agreed to AppFlowy's
+web.importFromAppFlowy	Import from AppFlowy
+web.dropAppFlowyFile	Drop your AppFlowy zip file here to upload, or click to browse
+invitation.openWorkspace	Open AppFlowy
+approveAccess.downloadApp	Download AppFlowy
+upgradePlanModal.upgradeSteps	How to upgrade your plan on AppFlowy:
+subscribe.cancelPlan.description	We're sorry to see you go. We'd love to hear your feedback to help us improve AppFlowy. Please take a moment to answer a few questions.
+subscribe.cancelPlan.questionOne.question	What prompted you to cancel your AppFlowy Pro subscription?
+subscribe.cancelPlan.questionTwo.question	How likely are you to consider re-subscribing to AppFlowy Pro in the future?
+subscribe.cancelPlan.questionFour.question	How would you describe your overall experience with AppFlowy?
+downloadTip	Don't have AppFlowy Apps installed? Download <link/>.
+videoSupported	Supported services: YouTube, Vimeo, and more.
+landingPage.inviteMember.title	Join <workspace /> on AppFlowy
+landingPage.unauthorized.description	You need to sign in to access this page. Please sign in with your AppFlowy account.
+landingPage.networkError.description	Unable to connect to AppFlowy. Please check your internet connection and try again.
+userError.SERVICE_UNAVAILABLE	AppFlowy isn't available right now. Try again later.
+userError.LICENSE_PROBLEM	There was a problem with your AppFlowy license.
+userError.LICENSE_EXPIRED	Your AppFlowy license has expired.
+userError.LICENSE_INACTIVE	Your AppFlowy license has been deleted.
+userError.LICENSE_LIMIT_REACHED	Your AppFlowy license has reached a limit.
+userError.LICENSE_DEVICE_LIMIT_REACHED	Your AppFlowy license has reached its device limit.
+userError.AI_CONFIGURATION_REQUIRED	AppFlowy couldn't sign in to the AI service.
+userError.APP_UPDATE_REQUIRED	Update AppFlowy to use this feature.
+userError.LOCK_TIMEOUT	AppFlowy timed out waiting for access to this content.

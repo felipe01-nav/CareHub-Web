@@ -1,0 +1,56 @@
+src/application/database-blob/page-stage.ts:1	const DB_NAME = 'AppFlowyDatabaseBlobDiffPageStage';
+src/application/database-yjs/fields/text/rich-text-notice.ts:19	'This text was formatted in a newer version of AppFlowy. Update AppFlowy (refresh this page) to edit it.',
+src/application/publish-snapshot/__fixtures__/published-page-snapshots.ts:298	text('a link', { href: 'https://appflowy.com' }),
+src/application/services/js-services/http/error-capability.ts:5	const USER_ERROR_SCHEMA_HEADER = 'X-AppFlowy-Error-Schema';
+src/application/services/js-services/http/gotrue.ts:136	Log.info(`[Auth] ${logContext}: verifying token with AppFlowy Cloud`);
+src/application/services/js-services/http/multipart-upload-store.ts:3	const DB_NAME = 'AppFlowyMultipartUploads';
+src/components/_shared/appflowy-power/AppFlowyPower.tsx:19	window.open('https://appflowy.com', '_blank');
+src/components/_shared/help/Help.tsx:65	href={'https://www.appflowy.com/what-is-new'}
+src/components/_shared/help/Help.tsx:75	href={'https://appflowy.com/guide/getting-started-with-appflowy'}
+src/components/_shared/help/Help.tsx:86	href={'https://discord.gg/9Q2xaN37tV'}
+src/components/_shared/help/Help.tsx:116	href={'https://github.com/AppFlowy-IO/AppFlowy-Web/issues/new/choose'}
+src/components/_shared/help/Help.tsx:130	href={'https://forum.appflowy.io/'}
+src/components/_shared/help/Help.tsx:141	href={'https://x.com/appflowy'}
+src/components/_shared/help/Help.tsx:152	href={'https://www.reddit.com/r/AppFlowy/'}
+src/components/_shared/hooks/useAuthenticatedImage.ts:26	Log.debug('[useAuthenticatedImage] src', isAppFlowyPublicFormUploadUrl(src) ? '[public-form-attachment]' : src);
+src/components/_shared/landing-page/ErrorPage.tsx:64	onClick={() => window.open('mailto:support@appflowy.io', '_blank')}
+src/components/_shared/mobile-topbar/MobileMore.tsx:23	window.open('https://appflowy.com/templates', '_blank');
+src/components/_shared/mobile-topbar/MobileMore.tsx:36	window.open('https://discord.gg/9Q2xaN37tV', '_blank');
+src/components/_shared/more-actions/MoreActionsContent.tsx:73	void openUrl('https://report.appflowy.io/', '_blank');
+src/components/_shared/more-actions/importer/ImporterDialogContent.tsx:15	label: 'web.importFromAppFlowy',
+src/components/_shared/more-actions/importer/ImporterDialogContent.tsx:16	placeholder: 'web.dropAppFlowyFile',
+src/components/ai-chat/AIChat.tsx:139	<li>{`• Download AppFlowy's mobile app`}</li>
+src/components/app/landing-pages/ApproveRequestPage.tsx:276	onClick={() => window.open(`mailto:support@appflowy.io`, '_blank')}
+src/components/app/settings/ManageDataPanel.tsx:15	const IMPORT_GUIDE_URL = 'https://appflowy.com/guide/import-from-AppFlowy';
+src/components/app/settings/ManageDataPanel.tsx:16	const BACKUP_GUIDE_URL = 'https://appflowy.com/guide/back-up-your-data';
+src/components/app/settings/MembersPanel.tsx:57	const PEOPLE_GUIDE_URL = 'https://appflowy.com/guide/getting-started-with-appflowy';
+src/components/app/share/ShareTabs.tsx:93	!hidePublish && currentUser?.email?.endsWith('appflowy.io') &&
+src/components/app/workspaces/Workspaces.tsx:214	<div className={'flex-1 text-left'}>{t('web.importFromAppFlowy')}</div>
+src/components/app/workspaces/Workspaces.tsx:223	void openUrl('https://docs.appflowy.io/docs/guides/import-from-notion', '_blank');
+src/components/as-template/AsTemplateButton.tsx:27	const isAppFlowyUser = currentUser.email?.endsWith('@appflowy.io');
+src/components/as-template/creator/AccountLinks.tsx:10	youtube: 'https://www.youtube.com/channel/UC...',
+src/components/as-template/creator/AccountLinks.tsx:11	twitter: 'https://twitter.com/...',
+src/components/chat/lib/utils.ts:35	const url = `https://appflowy.com/af_icons/${id}.svg`;
+src/components/database/fullcalendar/CalendarUnsupportedPage.tsx:29	onClick={() => window.open('https://appflowy.com/download', '_blank')}
+src/components/editor/components/element/UnSupportedBlock.tsx:50	href={'https://github.com/AppFlowy-IO/AppFlowy/issues/new?template=bug_report.yaml'}
+src/components/editor/components/panels/slash-panel/SlashPanel.tsx:867	[SlashMenuGroupKey.AppFlowyAI]: t('document.slashMenu.group.appflowyAI', { defaultValue: 'AppFlowy AI' }),
+src/components/editor/plugins/withPasted.ts:94	console.log('[AppFlowy] Handling HTML paste', html);
+src/components/editor/plugins/withPasted.ts:100	console.log('[AppFlowy] Handling Plain Text paste', text);
+src/components/editor/plugins/withPasted.ts:280	console.log('[AppFlowy] Parsed HTML blocks:', JSON.stringify(blocks, null, 2));
+src/components/error/NotFound.tsx:44	{t('publish.createWithAppFlowy')}
+src/components/error/NotFound.tsx:53	onClick: () => window.open('https://appflowy.com/download', '_self'),
+src/components/error/RecordNotFound.tsx:285	href={'https://github.com/AppFlowy-IO/AppFlowy/issues/new?template=bug_report.yaml'}
+src/components/error/RecordNotFound.tsx:294	<img src={emptyImageSrc} alt={'AppFlowy'} />
+src/components/error/SomethingError.tsx:25	href={'https://github.com/AppFlowy-IO/AppFlowy/issues/new?template=bug_report.yaml'}
+src/components/error/SomethingError.tsx:31	<img src={emptyImageSrc} alt={'AppFlowy'} />
+src/components/form/FormBody.tsx:310	href='https://appflowy.com'
+src/components/form/FormBody.tsx:313	aria-label='AppFlowy'
+src/components/login/Login.tsx:93	href={'https://appflowy.com/terms'}
+src/components/login/Login.tsx:102	href={'https://appflowy.com/privacy'}
+src/components/login/Login.tsx:151	window.location.href = 'https://appflowy.com';
+src/components/publish/header/RightMenu.tsx:33	const isAppFlowyUser = currentUser?.email?.endsWith('@appflowy.io');
+src/utils/download.ts:108	throw new Error('Authentication required for AppFlowy file download');
+src/utils/image.ts:226	Log.debug('[checkImage] resolving authenticated AppFlowy image');
+src/utils/image.ts:318	Log.debug('[fetchImageBlob] fetching authenticated AppFlowy image');
+src/utils/open_schema.ts:115	const universalLink = 'https://appflowy.com/download';
+src/utils/open_schema.ts:116	const intentUrl = `intent://appflowy.com/download#Intent;` +
