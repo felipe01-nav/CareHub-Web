@@ -608,5 +608,5 @@ EDITS["src/components/app/settings/Settings.tsx"] = [
      "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsPanel } from '@/components/carehub/CareHubAccounts';\n", 1),
     ("        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n",
      "        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n"
-     "        {open && (selectedItem as string) === CAREHUB_ACCOUNTS_ITEM && <CareHubAccountsPanel />}\n", 1),
+     "        {open && (selectedItem as string) === CAREHUB_ACCOUNTS_ITEM && <CareHubAccountsPanel myEmail={currentUser?.email} />}\n", 1),
 ]
