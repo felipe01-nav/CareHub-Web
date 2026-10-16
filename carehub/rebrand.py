@@ -768,5 +768,38 @@ EDITS["src/application/services/js-services/http/workspace-api.ts"] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Export → PDF: uses the browser's print dialog ("Save as PDF") because this
+# server has no PDF export service. The "linked pages" switch is hidden.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubPrint.ts"] = "src/components/carehub/CareHubPrint.ts"
+
+EDITS["src/components/app/share/ExportPanel.tsx"] = [
+    ("import { getViewPdfBlob } from '@/application/services/js-services/http/export-api';\n",
+     "import { carehubPrintPage } from '@/components/carehub/CareHubPrint';\n", 1),
+    ("import { downloadBlob } from '@/utils/download';\n", "", 1),
+    ("""      const { blob, filename } = await getViewPdfBlob(workspaceId, viewIdResolved, {
+        includeNested: isPro ? includeLinkedPages : false,
+        // Mirror desktop: embedded databases are a Pro feature
+        // (share_bloc.dart:447 shouldIncludeEmbeddedDatabases = isProPlan).
+        // Self-host users have isPro=true via useSubscriptionPlan.
+        includeDatabase: isPro,
+      });
+
+      downloadBlob(blob, filename);
+      toast.success(t('shareAction.exportPdfSuccess'));
+""",
+     """      hideBlockingLoader();
+      await carehubPrintPage(view?.name || 'Care Hub page');
+""", 1),
+    ("""      <div className='flex items-center justify-between gap-4'>
+        <div className='flex flex-col'>
+""",
+     """      <div className='hidden'>
+        <div className='flex flex-col'>
+""", 1),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
