@@ -152,7 +152,25 @@ export const CareHubTabs = memo(
     const tabs = ((node as Element).children || []).filter(
       (child) => Element.isElement(child) && (child as Element & { type?: string }).type === CAREHUB_TAB
     ) as (Element & { blockId: string; data?: TabData })[];
-    const [active, setActive] = useState(0);
+    const storageKey = `carehub-active-tab:${blockId}`;
+    const [active, setActiveState] = useState(() => {
+      try {
+        return Number(window.localStorage.getItem(storageKey)) || 0;
+      } catch {
+        return 0;
+      }
+    });
+    const setActive = useCallback(
+      (index: number) => {
+        setActiveState(index);
+        try {
+          window.localStorage.setItem(storageKey, String(index));
+        } catch {
+          // Private mode etc.: the tab just won't be remembered.
+        }
+      },
+      [storageKey]
+    );
     const [editingId, setEditingId] = useState<string | null>(null);
     const [draft, setDraft] = useState('');
     const activeIndex = Math.min(active, Math.max(tabs.length - 1, 0));
@@ -173,7 +191,7 @@ export const CareHubTabs = memo(
           selectFirstText(editor, tab.blockId);
         }
       },
-      [editor, readOnly, tabs, tabsPath]
+      [editor, readOnly, tabs, tabsPath, setActive]
     );
 
     const addTab = useCallback(() => {
@@ -197,7 +215,7 @@ export const CareHubTabs = memo(
       );
       setActive(tabs.length);
       if (tabId) selectFirstText(editor, tabId);
-    }, [editor, blockId, tabs.length]);
+    }, [editor, blockId, tabs.length, setActive]);
 
     const removeTab = useCallback(
       (index: number) => {
@@ -211,7 +229,7 @@ export const CareHubTabs = memo(
         executeOperations(editor.sharedRoot, [() => deleteBlock(editor.sharedRoot, tab.blockId)], 'carehubRemoveTab');
         setActive(Math.max(0, index - 1));
       },
-      [editor, tabs]
+      [editor, tabs, setActive]
     );
 
     const saveName = useCallback(() => {

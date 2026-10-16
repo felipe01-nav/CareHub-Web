@@ -261,6 +261,76 @@ EDITS.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# CareHub: search, settings and the grey "Goncalves Hub" look.
+# - Search finds pages by title in the browser (this server has no search
+#   service, so the stock search always came back empty).
+# - Settings no longer shows "Connections" (AppFlowy-cloud only).
+# - A neutral grey theme is loaded after the stock colours.
+# ---------------------------------------------------------------------------
+CAREHUB_TITLE_SEARCH = """// CareHub: search page titles in the sidebar outline (no server search here).
+function carehubTitleSearch(outline: View[], term: string, workspaceId: string): SearchDocumentPageResponse {
+  const needle = term.trim().toLowerCase();
+  const found: { item: SearchDocumentResponseItem; score: number }[] = [];
+
+  const walk = (views: View[], trail: string[]) => {
+    for (const view of views) {
+      const name = (view.name || '').trim();
+      const isSpace = isSpaceView(view);
+
+      if (!isSpace && needle && name.toLowerCase().includes(needle)) {
+        const score = name.toLowerCase().startsWith(needle) ? 2 : 1;
+
+        found.push({
+          score,
+          item: {
+            object_id: view.view_id,
+            workspace_id: workspaceId,
+            score,
+            content: trail.length ? trail.join(' / ') : '',
+            preview: '',
+          } as unknown as SearchDocumentResponseItem,
+        });
+      }
+
+      walk(view.children || [], name ? [...trail, name] : trail);
+    }
+  };
+
+  walk(outline, []);
+  found.sort((a, b) => b.score - a.score);
+
+  return {
+    items: found.slice(0, 50).map((entry) => entry.item),
+    has_more: false,
+    next_offset: null,
+  } as unknown as SearchDocumentPageResponse;
+}
+
+function BestMatch({
+"""
+
+EXTRA_FILES[HERE / "web" / "carehub-theme.css"] = "src/styles/variables/carehub-theme.css"
+
+EDITS.update({
+    "src/components/app/search/BestMatch.tsx": [
+        ("\nfunction BestMatch({\n", "\n" + CAREHUB_TITLE_SEARCH, 1),
+        ("        const page = await SearchService.searchWorkspaceDocumentPage(\n"
+         "          currentWorkspaceId,\n          searchTerm,\n          0,\n          keywordSearchStreamId\n        );\n",
+         "        const page = carehubTitleSearch(outlineRef.current || [], searchTerm, currentWorkspaceId);\n", 1),
+    ],
+    "src/components/app/settings/SettingMenu.tsx": [
+        ("import { ReactComponent as ConnectionsIcon } from '@/assets/icons/link.svg';\n", "", 1),
+        ("      {\n        value: SettingMenuItem.CONNECTIONS,\n"
+         "        label: t('settings.connections.menuLabel'),\n        IconComponent: ConnectionsIcon,\n      },\n", "", 1),
+    ],
+    "src/styles/global.css": [
+        ('@import "./template.css";\n',
+         '@import "./template.css";\n@import "./variables/carehub-theme.css";\n', 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
