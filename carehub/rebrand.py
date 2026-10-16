@@ -404,6 +404,56 @@ EDITS.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# CareHub: page polish.
+# - No grey box around an embedded database while you work inside it.
+# - Embedded databases stay inside the page column and scroll sideways there.
+# - Delete / Backspace removes a block picked with its handle (like Notion).
+# ---------------------------------------------------------------------------
+EDITS.update({
+    "src/components/editor/components/element/Element.tsx": EDITS["src/components/editor/components/element/Element.tsx"] + [
+        ("    if (\n      [\n        ...CONTAINER_BLOCK_TYPES,\n",
+         "    if (\n      isDatabaseBlockType(type) ||\n      [\n        ...CONTAINER_BLOCK_TYPES,\n", 1),
+    ],
+    "src/components/editor/components/blocks/database/hooks/useResizePositioning.ts": [
+        ("      setWidth(rect.width);\n      setPaddingStart(offsetLeft);\n      setPaddingEnd(offsetRight);\n",
+         "      // CareHub: stay inside the page column (scroll sideways inside it).\n"
+         "      void offsetLeft;\n      void offsetRight;\n"
+         "      setWidth(blockRect.width);\n      setPaddingStart(0);\n      setPaddingEnd(0);\n", 1),
+        ("    resizeObserver.observe(scrollContainer);\n",
+         "    resizeObserver.observe(scrollContainer);\n    resizeObserver.observe(dom);\n", 1),
+    ],
+    "src/components/database/list/List.tsx": [
+        ("  const effectivePaddingStart = paddingStart || LIST_DESKTOP_INLINE_PADDING;\n"
+         "  const effectivePaddingEnd = paddingEnd || LIST_DESKTOP_INLINE_PADDING;\n",
+         "  // CareHub: inside a page the list lines up with the page column.\n"
+         "  const effectivePaddingStart = isDocumentBlock ? LIST_ROW_ACTIONS_WIDTH : paddingStart || LIST_DESKTOP_INLINE_PADDING;\n"
+         "  const effectivePaddingEnd = isDocumentBlock ? 0 : paddingEnd || LIST_DESKTOP_INLINE_PADDING;\n", 1),
+    ],
+    "src/components/editor/components/toolbar/block-controls/ControlsMenu.tsx": [
+        ("import { useCallback, useMemo } from 'react';\n",
+         "import { useCallback, useEffect, useMemo } from 'react';\n", 1),
+        ("  return (\n    <Popover\n      anchorEl={anchorEl}\n",
+         "  // CareHub: Delete / Backspace removes the picked block(s), like Notion.\n"
+         "  useEffect(() => {\n    if (!open) return;\n"
+         "    const onKeyDown = (event: KeyboardEvent) => {\n"
+         "      if (event.key !== 'Backspace' && event.key !== 'Delete') return;\n"
+         "      const target = event.target as HTMLElement | null;\n\n"
+         "      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;\n"
+         "      const deleteOption = options.find((option) => option.key === 'delete');\n\n"
+         "      if (!deleteOption) return;\n"
+         "      event.preventDefault();\n      event.stopPropagation();\n"
+         "      onClose();\n"
+         "      Promise.resolve(deleteOption.onClick()).catch(() => undefined);\n"
+         "    };\n\n"
+         "    window.addEventListener('keydown', onKeyDown, true);\n"
+         "    return () => window.removeEventListener('keydown', onKeyDown, true);\n"
+         "  }, [open, options, onClose]);\n\n"
+         "  return (\n    <Popover\n      anchorEl={anchorEl}\n", 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
