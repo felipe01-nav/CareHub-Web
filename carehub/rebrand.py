@@ -931,6 +931,34 @@ EDITS["src/components/database/components/grid/grid-row/GridVirtualRow.tsx"] += 
 ]
 
 
+# ---------------------------------------------------------------------------
+# Claude assistant (like Notion AI): floating window, side panel or full
+# screen, with saved conversations. Cmd/Ctrl + J opens it.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubAssistant.tsx"] = "src/components/carehub/CareHubAssistant.tsx"
+
+EDITS["src/components/app/AuthLayout.tsx"] = [
+    ("import { getPlatform } from '@/utils/platform';\n",
+     "import { getPlatform } from '@/utils/platform';\nimport CareHubAssistant from '@/components/carehub/CareHubAssistant';\n", 1),
+    ("      {isMobile ? <MobileMainLayout /> : <MainLayout />}\n",
+     "      {isMobile ? <MobileMainLayout /> : <MainLayout />}\n      <CareHubAssistant />\n", 1),
+]
+
+EDITS["src/components/app/MainLayout.tsx"] = [
+    ("import { InlineCommentSidebar } from '@/components/inline-comment/InlineCommentSidebar';\n",
+     "import { InlineCommentSidebar } from '@/components/inline-comment/InlineCommentSidebar';\n"
+     "import { useCarehubAssistantDockWidth } from '@/components/carehub/CareHubAssistant';\n", 1),
+    ("  const { isPanelOpen } = useInlineCommentPanel();\n",
+     "  const { isPanelOpen } = useInlineCommentPanel();\n  const carehubAssistantWidth = useCarehubAssistantDockWidth();\n", 1),
+    ("    return diff;\n  }, [chatViewDrawerOpen, drawerOpened, drawerWidth, isPanelOpen, openViewDrawerWidth]);\n",
+     "    diff += carehubAssistantWidth;\n\n    return diff;\n  }, [carehubAssistantWidth, chatViewDrawerOpen, drawerOpened, drawerWidth, isPanelOpen, openViewDrawerWidth]);\n", 1),
+    ("        rightOffset={(chatViewDrawerOpen ? openViewDrawerWidth : 0) + (isPanelOpen ? INLINE_COMMENT_DRAWER_WIDTH : 0)}\n",
+     "        rightOffset={(chatViewDrawerOpen ? openViewDrawerWidth : 0) + (isPanelOpen ? INLINE_COMMENT_DRAWER_WIDTH : 0) + carehubAssistantWidth}\n", 1),
+    ("          rightOffset={chatViewDrawerOpen ? openViewDrawerWidth : 0}\n",
+     "          rightOffset={(chatViewDrawerOpen ? openViewDrawerWidth : 0) + carehubAssistantWidth}\n", 1),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
 
