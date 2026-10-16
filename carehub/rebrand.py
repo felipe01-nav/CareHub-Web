@@ -578,3 +578,35 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---------------------------------------------------------------------------
+# CareHub: Settings > "User accounts" for the administrator (emails listed in
+# CAREHUB_ADMIN_EMAILS on the server). Add accounts with a password, set a new
+# password, remove an account. No email is sent.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubAccounts.tsx"] = "src/components/carehub/CareHubAccounts.tsx"
+
+EDITS["src/components/app/settings/SettingMenu.tsx"] += [
+    ("import { ReactComponent as MembersIcon } from '@/assets/icons/users.svg';\n",
+     "import { ReactComponent as MembersIcon } from '@/assets/icons/users.svg';\n"
+     "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsIcon, useCarehubIsAdmin } from '@/components/carehub/CareHubAccounts';\n", 1),
+    ("  const { t } = useTranslation();\n\n  const options = useMemo(() => {\n",
+     "  const { t } = useTranslation();\n  const carehubIsAdmin = useCarehubIsAdmin();\n\n  const options = useMemo(() => {\n", 1),
+    ("        IconComponent: MembersIcon,\n      },\n",
+     "        IconComponent: MembersIcon,\n      },\n"
+     "      ...(carehubIsAdmin\n        ? [\n            {\n"
+     "              value: CAREHUB_ACCOUNTS_ITEM as SettingMenuItem,\n"
+     "              label: 'User accounts',\n"
+     "              IconComponent: CareHubAccountsIcon,\n            },\n          ]\n        : []),\n", 1),
+    ("  }, [showBilling, t]);\n", "  }, [showBilling, t, carehubIsAdmin]);\n", 1),
+]
+
+EDITS["src/components/app/settings/Settings.tsx"] = [
+    ("import SettingMenu from '@/components/app/settings/SettingMenu';\n",
+     "import SettingMenu from '@/components/app/settings/SettingMenu';\n"
+     "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsPanel } from '@/components/carehub/CareHubAccounts';\n", 1),
+    ("        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n",
+     "        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n"
+     "        {open && (selectedItem as string) === CAREHUB_ACCOUNTS_ITEM && <CareHubAccountsPanel />}\n", 1),
+]
