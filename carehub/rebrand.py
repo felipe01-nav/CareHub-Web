@@ -8,7 +8,7 @@ Run from the web source folder:  python3 ../carehub/carehub/rebrand.py
 import pathlib
 import sys
 
-APP_NAME = "CareHub"
+APP_NAME = "Care Hub"
 
 LOGO_MARK = (
     "<div style={{ width: 36, height: 36, borderRadius: 8, background: '#191919', "
@@ -66,6 +66,11 @@ LOGIN_FOOTER = """        <Separator className={'w-[320px] max-w-full'} />
 DESCRIPTION = "AppFlowy is an AI collaborative workspace where you achieve more without losing control of your data"
 
 EDITS = {
+    # Browser tab: "<page> | Care Hub" and our own icon instead of the AppFlowy logo.
+    "src/components/_shared/helmet/ViewHelmet.tsx": [
+        ("<title>{name} | AppFlowy</title>", "<title>{name} | " + APP_NAME + "</title>", 1),
+        ("let url = '/appflowy.svg';", "let url = '/carehub-icon.svg';", 1),
+    ],
     "src/components/login/Login.tsx": [
         ("{t('welcomeTo')} AppFlowy", "{t('welcomeTo')} " + APP_NAME, 1),
         ("<Logo className={'h-9 w-9'} />", LOGO_MARK, 1),
@@ -468,6 +473,8 @@ def main() -> int:
             text = text.replace(old, new)
         path.write_text(text, encoding="utf-8")
     pathlib.Path("public/carehub-icon.svg").write_text(FAVICON, encoding="utf-8")
+    # Any leftover place that shows the AppFlowy logo now shows ours.
+    pathlib.Path("public/appflowy.svg").write_text(FAVICON, encoding="utf-8")
     dest = pathlib.Path(RICH_TEXT_DEST)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(RICH_TEXT_SRC.read_text(encoding="utf-8"), encoding="utf-8")
