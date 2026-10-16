@@ -576,9 +576,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
 
 # ---------------------------------------------------------------------------
 # CareHub: Settings > "User accounts" for the administrator (emails listed in
@@ -610,3 +607,123 @@ EDITS["src/components/app/settings/Settings.tsx"] = [
      "        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n"
      "        {open && (selectedItem as string) === CAREHUB_ACCOUNTS_ITEM && <CareHubAccountsPanel myEmail={currentUser?.email} />}\n", 1),
 ]
+
+
+# ---------------------------------------------------------------------------
+# CareHub: "Freeze columns" in table views. Column menu > "Freeze up to this
+# column" keeps the first columns on the left while scrolling sideways.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubFreeze.tsx"] = "src/components/carehub/CareHubFreeze.tsx"
+
+EDITS["src/components/database/components/grid/grid-table/useGridVirtualizer.ts"] = [
+    ("import { useVirtualizer } from '@tanstack/react-virtual';\n",
+     "import { defaultRangeExtractor, type Range, useVirtualizer } from '@tanstack/react-virtual';\n", 1),
+    ("export function useGridVirtualizer({ data, columns }: { columns: RenderColumn[]; data: RenderRow[] }) {\n",
+     "export function useGridVirtualizer({\n  data,\n  columns,\n  frozenCount = 0,\n}: {\n  columns: RenderColumn[];\n  data: RenderRow[];\n  frozenCount?: number;\n}) {\n", 1),
+    ("  const columnVirtualizer = useVirtualizer({\n    horizontal: true,\n",
+     "  // CareHub: frozen columns are always drawn, even when scrolled out of view.\n"
+     "  const carehubRangeExtractor = useCallback(\n    (range: Range) => {\n"
+     "      const base = defaultRangeExtractor(range);\n\n      if (!frozenCount) return base;\n"
+     "      const all = new Set(base);\n\n"
+     "      for (let i = 0; i < Math.min(frozenCount, range.count); i++) all.add(i);\n"
+     "      return Array.from(all).sort((a, b) => a - b);\n    },\n    [frozenCount]\n  );\n\n"
+     "  const columnVirtualizer = useVirtualizer({\n    horizontal: true,\n    rangeExtractor: carehubRangeExtractor,\n", 1),
+]
+
+EDITS["src/components/database/components/grid/grid-table/GridVirtualizer.tsx"] = [
+    ("import { cn } from '@/lib/utils';\n",
+     "import { cn } from '@/lib/utils';\n"
+     "import { CarehubFreezeContext, clampFrozenCount, useCarehubFrozenCount } from '@/components/carehub/CareHubFreeze';\n", 1),
+    ("  const { parentRef, virtualizer, columnVirtualizer, scrollMarginTop, isReady } = useGridVirtualizer({\n    data,\n    columns,\n  });\n",
+     "  const [carehubFrozenRaw] = useCarehubFrozenCount();\n"
+     "  const carehubFrozen = clampFrozenCount(carehubFrozenRaw, columns);\n"
+     "  const { parentRef, virtualizer, columnVirtualizer, scrollMarginTop, isReady } = useGridVirtualizer({\n    data,\n    columns,\n    frozenCount: carehubFrozen,\n  });\n"
+     "  const carehubFreezeOrigin = Number(columnVirtualizer.options.paddingStart) || 0;\n"
+     "  const carehubFreezeValue = useMemo(\n    () => ({ count: carehubFrozen, origin: carehubFreezeOrigin }),\n    [carehubFrozen, carehubFreezeOrigin]\n  );\n", 1),
+    ("    <GridDragContext.Provider value={contextValue}>\n",
+     "    <GridDragContext.Provider value={contextValue}>\n      <CarehubFreezeContext.Provider value={carehubFreezeValue}>\n", 1),
+    ("    </GridDragContext.Provider>\n",
+     "      </CarehubFreezeContext.Provider>\n    </GridDragContext.Provider>\n", 1),
+]
+
+EDITS["src/components/database/components/grid/grid-row/GridVirtualRow.tsx"] = [
+    ("  const children = useMemo(() => {\n    return uniqBy(columnItems, 'key').map((column) => {\n      return (\n        <GridVirtualColumn\n",
+     "  const children = useMemo(() => {\n"
+     "    // CareHub: frozen columns can sit apart from the visible ones; keep the gap.\n"
+     "    let carehubPrevEnd: number | undefined;\n\n"
+     "    return uniqBy(columnItems, 'key').flatMap((column) => {\n"
+     "      const carehubGap = carehubPrevEnd !== undefined && column.start > carehubPrevEnd + 0.5 ? column.start - carehubPrevEnd : 0;\n\n"
+     "      carehubPrevEnd = column.end;\n"
+     "      const cell = (\n        <GridVirtualColumn\n", 1),
+    ("          onResizeColumnStart={onResizeColumnStart}\n        />\n      );\n    });\n  }, [columnItems, columns, data, row, onResizeColumnStart]);\n",
+     "          onResizeColumnStart={onResizeColumnStart}\n        />\n      );\n\n"
+     "      return carehubGap\n        ? [<div key={`carehub-gap-${column.key}`} aria-hidden style={{ width: carehubGap, flexShrink: 0 }} />, cell]\n        : [cell];\n"
+     "    });\n  }, [columnItems, columns, data, row, onResizeColumnStart]);\n", 1),
+]
+
+EDITS["src/components/database/components/grid/grid-column/GridVirtualColumn.tsx"] = [
+    ("import { cn } from '@/lib/utils';\n",
+     "import { cn } from '@/lib/utils';\nimport { useCarehubFreeze } from '@/components/carehub/CareHubFreeze';\n", 1),
+    ("  const showActions = Boolean(isHoverRow && columnData.isPrimary && rowData.rowId);\n",
+     "  const showActions = Boolean(isHoverRow && columnData.isPrimary && rowData.rowId);\n"
+     "  const carehubFreeze = useCarehubFreeze();\n"
+     "  const carehubFrozen = column.index < carehubFreeze.count;\n", 1),
+    ("        readOnly && rowType === RenderRowType.CalculateRow ? 'border-t border-border-primary' : ''\n      )}\n      style={{\n        width: column.size,\n      }}\n",
+     "        readOnly && rowType === RenderRowType.CalculateRow ? 'border-t border-border-primary' : '',\n"
+     "        carehubFrozen && 'carehub-frozen-cell',\n"
+     "        carehubFrozen && column.index === carehubFreeze.count - 1 && 'carehub-frozen-last'\n      )}\n"
+     "      style={{\n        width: column.size,\n"
+     "        ...(carehubFrozen\n          ? { position: 'sticky' as const, left: column.start - carehubFreeze.origin, zIndex: 11 }\n          : {}),\n      }}\n", 1),
+]
+
+EDITS["src/components/database/components/grid/grid-column/GridFieldMenu.tsx"] = [
+    ("import { Switch } from '@/components/ui/switch';\n",
+     "import { Switch } from '@/components/ui/switch';\n"
+     "import { CareHubFreezeIcon, useCarehubFieldIndex, useCarehubFrozenCount } from '@/components/carehub/CareHubFreeze';\n", 1),
+    ("  const onDuplicateProperty = useDuplicatePropertyDispatch();\n",
+     "  const onDuplicateProperty = useDuplicatePropertyDispatch();\n"
+     "  const [carehubFrozenCount, setCarehubFrozenCount] = useCarehubFrozenCount();\n"
+     "  const carehubFieldIndex = useCarehubFieldIndex(fieldId);\n", 1),
+    ("      ...(canCreateFilter\n        ? [\n",
+     "      ...(carehubFieldIndex >= 0\n        ? [\n            {\n"
+     "              testId: 'carehub-freeze',\n"
+     "              label: carehubFrozenCount === carehubFieldIndex + 1 ? 'Unfreeze columns' : 'Freeze up to this column',\n"
+     "              icon: <CareHubFreezeIcon />,\n"
+     "              onSelect: () => {\n"
+     "                setCarehubFrozenCount(carehubFrozenCount === carehubFieldIndex + 1 ? 0 : carehubFieldIndex + 1);\n"
+     "              },\n            },\n          ]\n        : []),\n"
+     "      ...(canCreateFilter\n        ? [\n", 1),
+    ("    handleCreateFilter,\n    type,\n  ]);\n",
+     "    handleCreateFilter,\n    type,\n    carehubFieldIndex,\n    carehubFrozenCount,\n    setCarehubFrozenCount,\n  ]);\n", 1),
+]
+
+
+
+# ---------------------------------------------------------------------------
+# CareHub Calendar: "Calendar" in the sidebar opens a full calendar (day, week,
+# month) with your own events plus read-only iCloud / Google calendars.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubCalendar.tsx"] = "src/components/carehub/CareHubCalendar.tsx"
+EXTRA_FILES[HERE / "web" / "CareHubIcs.ts"] = "src/components/carehub/CareHubIcs.ts"
+
+EDITS["src/components/app/AppRouter.tsx"] = [
+    ("import TrashPage from '@/pages/TrashPage';\n",
+     "import TrashPage from '@/pages/TrashPage';\nimport CareHubCalendarPage from '@/components/carehub/CareHubCalendar';\n", 1),
+    ("        <Route path={'trash'} element={<TrashPage />} />\n",
+     "        <Route path={'trash'} element={<TrashPage />} />\n        <Route path={'calendar'} element={<CareHubCalendarPage />} />\n", 1),
+]
+
+EDITS["src/components/app/SideBar.tsx"] = [
+    ("import { NotificationBell } from '@/components/notifications';\n",
+     "import { NotificationBell } from '@/components/notifications';\nimport { CareHubCalendarNavItem } from '@/components/carehub/CareHubCalendar';\n", 1),
+    ("          <Search />\n", "          <Search />\n          <CareHubCalendarNavItem />\n", 1),
+]
+
+EDITS["src/components/app/header/AppHeader.tsx"] = [
+    ("  const isTrash = window.location.pathname === '/app/trash';\n",
+     "  const isTrash = window.location.pathname === '/app/trash' || window.location.pathname === '/app/calendar';\n", 1),
+]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
