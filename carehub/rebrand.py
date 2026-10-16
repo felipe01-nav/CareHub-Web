@@ -89,6 +89,40 @@ EDITS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# CareHub form improvements (question descriptions)
+# Multi-line description box with Bold / Italic / Underline / Colour / Link,
+# and formatted, wrapped descriptions for people filling in the form.
+# ---------------------------------------------------------------------------
+HERE = pathlib.Path(__file__).resolve().parent
+RICH_TEXT_SRC = HERE / "web" / "CareHubRichText.tsx"
+RICH_TEXT_DEST = "src/components/carehub/CareHubRichText.tsx"
+
+QUESTION_DESCRIPTION_INPUT = "        <Input\n          variant='ghost'\n          value={descriptionDraft}\n          onChange={(e) => {\n            const value = e.target.value;\n\n            setDescriptionDraft(value);\n            descriptionDraftRef.current = value;\n            descriptionDirtyRef.current = true;\n            clearDescriptionTimer();\n            descriptionTimer.current = setTimeout(() => {\n              descriptionTimer.current = null;\n              commitDescription(value);\n            }, DESCRIPTION_DEBOUNCE_MS);\n          }}\n          onFocus={() => {\n            descriptionFocusedRef.current = true;\n          }}\n          onBlur={() => {\n            descriptionFocusedRef.current = false;\n            if (descriptionDirtyRef.current) {\n              commitDescription(descriptionDraftRef.current);\n              return;\n            }\n\n            const deferred = deferredExternalDescriptionRef.current;\n\n            if (deferred === null) return;\n            deferredExternalDescriptionRef.current = null;\n            descriptionDraftRef.current = deferred;\n            setDescriptionDraft(deferred);\n          }}\n          // The whole card is RBD's drag activator (see\n          // `DraggableQuestionList`). Without stopping mouse-down on\n          // the input, dragging across the description text starts\n          // a card reorder instead of selecting characters. Capture\n          // phase so the stop happens before RBD's sensor fires.\n          onMouseDownCapture={(e) => e.stopPropagation()}\n          placeholder='Add description'\n          className='mt-1 italic'\n        />\n"
+
+QUESTION_DESCRIPTION_EDITOR = "        <CareHubDescriptionEditor\n          value={descriptionDraft}\n          onChange={(value) => {\n            setDescriptionDraft(value);\n            descriptionDraftRef.current = value;\n            descriptionDirtyRef.current = true;\n            clearDescriptionTimer();\n            descriptionTimer.current = setTimeout(() => {\n              descriptionTimer.current = null;\n              commitDescription(value);\n            }, DESCRIPTION_DEBOUNCE_MS);\n          }}\n          onFocus={() => {\n            descriptionFocusedRef.current = true;\n          }}\n          onBlur={() => {\n            descriptionFocusedRef.current = false;\n            if (descriptionDirtyRef.current) {\n              commitDescription(descriptionDraftRef.current);\n              return;\n            }\n\n            const deferred = deferredExternalDescriptionRef.current;\n\n            if (deferred === null) return;\n            deferredExternalDescriptionRef.current = null;\n            descriptionDraftRef.current = deferred;\n            setDescriptionDraft(deferred);\n          }}\n          placeholder='Add description'\n        />\n"
+
+EDITS.update({
+    "src/components/database/form/FormQuestionCard.tsx": [
+        ("import { Input } from '@/components/ui/input';\n",
+         "import { CareHubDescriptionEditor } from '@/components/carehub/CareHubRichText';\n", 1),
+        (QUESTION_DESCRIPTION_INPUT, QUESTION_DESCRIPTION_EDITOR, 1),
+    ],
+    "src/components/form/FormQuestion.tsx": [
+        ("import { cn } from '@/lib/utils';\n",
+         "import { renderCareHubRichText } from '@/components/carehub/CareHubRichText';\nimport { cn } from '@/lib/utils';\n", 1),
+        ("{question.description && <p className='text-sm text-text-caption'>{question.description}</p>}",
+         "{question.description && (\n          <p className='whitespace-pre-wrap break-words text-sm leading-relaxed text-text-caption'>\n            {renderCareHubRichText(question.description)}\n          </p>\n        )}", 1),
+    ],
+    "src/components/database/form/FormQuestionCardReadOnly.tsx": [
+        ("import { FormQuestionPlaceholder } from './FormQuestionPlaceholder';\n",
+         "import { renderCareHubRichText } from '@/components/carehub/CareHubRichText';\n\nimport { FormQuestionPlaceholder } from './FormQuestionPlaceholder';\n", 1),
+        ("<p className='mt-1 text-sm italic text-text-caption'>{description}</p>",
+         "<p className='mt-1 whitespace-pre-wrap break-words text-sm text-text-caption'>{renderCareHubRichText(description)}</p>", 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
@@ -103,6 +137,9 @@ def main() -> int:
             text = text.replace(old, new)
         path.write_text(text, encoding="utf-8")
     pathlib.Path("public/carehub-icon.svg").write_text(FAVICON, encoding="utf-8")
+    dest = pathlib.Path(RICH_TEXT_DEST)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(RICH_TEXT_SRC.read_text(encoding="utf-8"), encoding="utf-8")
     if failed:
         return 1
     print("CareHub rebrand: done")
