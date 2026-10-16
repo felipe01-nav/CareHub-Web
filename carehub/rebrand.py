@@ -597,15 +597,23 @@ EDITS["src/components/app/settings/SettingMenu.tsx"] += [
      "              label: 'User accounts',\n"
      "              IconComponent: CareHubAccountsIcon,\n            },\n          ]\n        : []),\n", 1),
     ("  }, [showBilling, t]);\n", "  }, [showBilling, t, carehubIsAdmin]);\n", 1),
+    ("    ];\n  }, [showBilling, t, carehubIsAdmin]);\n",
+     "    ].filter((option) => !(carehubIsAdmin && option.value === SettingMenuItem.MEMBERS));\n"
+     "  }, [showBilling, t, carehubIsAdmin]);\n", 1),
 ]
 
 EDITS["src/components/app/settings/Settings.tsx"] = [
     ("import SettingMenu from '@/components/app/settings/SettingMenu';\n",
      "import SettingMenu from '@/components/app/settings/SettingMenu';\n"
-     "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsPanel } from '@/components/carehub/CareHubAccounts';\n", 1),
+     "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsPanel, useCarehubIsAdmin } from '@/components/carehub/CareHubAccounts';\n", 1),
+    ("  const currentUser = useCurrentUserOptional();\n",
+     "  const currentUser = useCurrentUserOptional();\n  const carehubIsAdmin = useCarehubIsAdmin();\n", 1),
+    # Administrators get one combined "User accounts" page instead of People + User accounts.
     ("        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n",
-     "        {selectedItem === SettingMenuItem.MEMBERS && <MembersPanel />}\n"
-     "        {open && (selectedItem as string) === CAREHUB_ACCOUNTS_ITEM && <CareHubAccountsPanel myEmail={currentUser?.email} />}\n", 1),
+     "        {selectedItem === SettingMenuItem.MEMBERS && !carehubIsAdmin && <MembersPanel />}\n"
+     "        {open && ((selectedItem as string) === CAREHUB_ACCOUNTS_ITEM || (selectedItem === SettingMenuItem.MEMBERS && carehubIsAdmin)) && (\n"
+     "          <CareHubAccountsPanel myEmail={currentUser?.email} />\n"
+     "        )}\n", 1),
 ]
 
 
@@ -798,6 +806,69 @@ EDITS["src/components/app/share/ExportPanel.tsx"] = [
      """      <div className='hidden'>
         <div className='flex flex-col'>
 """, 1),
+]
+
+
+# ---------------------------------------------------------------------------
+# Password rules: at least 8 characters, an uppercase letter, a lowercase
+# letter and a symbol.
+# ---------------------------------------------------------------------------
+EDITS["src/components/login/password-validation.ts"] = [
+    ("    minLength: password.length >= 6,\n", "    minLength: password.length >= 8,\n", 1),
+    ("    hasSpecialChar: /[!@#$%^&*()_+\\-=[\\]{};':\"\\\\|,.<>/?]/.test(password),\n",
+     "    hasSpecialChar: /[^A-Za-z0-9\\s]/.test(password),\n", 1),
+]
+
+
+# ---------------------------------------------------------------------------
+# App text: every "AppFlowy" in the English texts becomes "Care Hub"
+# (for example Settings > Manage data). Only texts change, never keys.
+# ---------------------------------------------------------------------------
+TRANSLATIONS_FILE = "src/@types/translations/en.json"
+
+
+def rebrand_translations() -> bool:
+    import json
+
+    path = pathlib.Path(TRANSLATIONS_FILE)
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    def walk(value):
+        if isinstance(value, dict):
+            return {key: walk(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, str):
+            return value.replace("AppFlowy", APP_NAME)
+        return value
+
+    data = walk(data)
+    data["appName"] = APP_NAME
+    data.setdefault("changePassword", {})["passwordError"] = "Password must be at least 8 characters long"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+_carehub_main_before_translations = main
+
+
+def main() -> int:  # noqa: F811 - runs the steps above, then the text rebrand
+    result = _carehub_main_before_translations()
+    try:
+        rebrand_translations()
+        print("CareHub rebrand: texts done")
+    except Exception as error:  # a text problem must never break the build
+        print(f"CareHub rebrand: texts skipped ({error})")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Phones: pages can be edited on a phone too (upstream made them read-only).
+# Locked pages and view-only sharing still stay read-only.
+# ---------------------------------------------------------------------------
+EDITS["src/components/app/hooks/useViewOperations.ts"] = [
+    ("  if (isMobile) return true; // Mobile has highest priority - always readonly\n",
+     "  // Care Hub: phones can edit too.\n  void isMobile;\n", 1),
 ]
 
 
