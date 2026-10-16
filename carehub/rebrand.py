@@ -525,6 +525,26 @@ EDITS.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# CareHub: no e-mail service, so hide everything that would send an e-mail
+# (magic-link sign-in, Forgot password, 'prefer magic link').
+# ---------------------------------------------------------------------------
+EDITS.update({
+    'src/components/login/EmailLogin.tsx': [
+        ('  const handleSubmitPassword = async (e: React.MouseEvent<HTMLButtonElement>) => {\n    e.preventDefault();\n', '  const handleSubmitPassword = async (e?: React.MouseEvent<HTMLButtonElement>) => {\n    e?.preventDefault();\n', 1),
+        ('              void handleSubmitEmail();\n', '              void handleSubmitPassword();\n', 1),
+        ("      <Button\n        data-testid='login-magic-link-button'\n        onClick={handleSubmitEmail}\n        size={'lg'}\n        className={'w-[320px]'}\n        loading={loading}\n      >\n        {loading ? (\n          <>\n            <Progress />\n            {t('loading')}\n          </>\n        ) : (\n          t('signIn.signInWithEmail')\n        )}\n      </Button>\n", '', 1),
+        ("        data-testid='login-password-button'\n        variant={'outline'}\n", "        data-testid='login-password-button'\n", 1),
+    ],
+    'src/components/login/EnterPassword.tsx': [
+        ("        <Button\n          variant={'link'}\n          onClick={() => {\n            window.location.href = buildLoginUrl({\n              action: LOGIN_ACTION.RESET_PASSWORD,\n              email,\n              redirectTo,\n            });\n          }}\n          disabled={loading}\n          className={'w-full justify-start px-0 text-sm'}\n        >\n          {t('signIn.forgotPassword')}\n        </Button>\n", '', 1),
+    ],
+    'src/components/login/SignUpPassword.tsx': [
+        ("        <div className={'flex items-center gap-1'}>\n          <span>{t('signUp.preferMagicLink')}</span>\n          <Button\n            variant={'link'}\n            onClick={goBackToLogin}\n            className={'px-0 text-text-secondary underline'}\n            data-testid='signup-go-back-button'\n            disabled={loading}\n          >\n            {t('signUp.goBack')}\n          </Button>\n        </div>\n", '', 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
