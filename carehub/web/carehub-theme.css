@@ -1,0 +1,248 @@
+/*
+ * CareHub "Goncalves Hub" look: neutral greys, near-black text and buttons,
+ * light-grey borders, system font, 8px corners. Loaded after the stock
+ * variables so it wins. Status colours (error/success/warning), text/background
+ * palettes, badges and tags are left alone.
+ */
+
+html,
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji';
+}
+
+:root {
+  /* text & icons */
+  --text-primary: #0a0a0a;
+  --text-secondary: #737373;
+  --text-tertiary: #a3a3a3;
+  --text-quaternary: #e5e5e5;
+  --text-action: #171717;
+  --text-action-hover: #404040;
+  --icon-primary: #0a0a0a;
+  --icon-secondary: #737373;
+  --icon-tertiary: #a3a3a3;
+  --icon-quaternary: #e5e5e5;
+
+  /* borders */
+  --border-primary: #e5e5e5;
+  --border-primary-hover: #d4d4d4;
+  --border-secondary: #404040;
+  --border-secondary-hover: #525252;
+  --border-tertiary: #0a0a0a;
+  --border-tertiary-hover: #262626;
+  --border-theme-thick: #171717;
+  --border-theme-thick-hover: #404040;
+
+  /* fills */
+  --fill-primary: #fafafa;
+  --fill-primary-hover: #f5f5f5;
+  --fill-secondary: #d4d4d4;
+  --fill-secondary-hover: #a3a3a3;
+  --fill-tertiary: #737373;
+  --fill-tertiary-hover: #a3a3a3;
+  --fill-quaternary: #171717;
+  --fill-quaternary-hover: #262626;
+  --fill-content-hover: #0000000d;
+  --fill-content-visible: #0000000d;
+  --fill-content-visible-hover: #0000001a;
+  --fill-theme-thick: #171717;
+  --fill-theme-thick-hover: #404040;
+  --fill-theme-select: #0000000f;
+  --fill-text-select: #0000001f;
+  --fill-button-active: #0000000f;
+
+  /* surfaces */
+  --surface-primary: #ffffff;
+  --surface-primary-hover: #fafafa;
+  --surface-layer-01-hover: #fafafa;
+  --surface-layer-02-hover: #fafafa;
+  --surface-layer-03-hover: #fafafa;
+  --surface-layer-04-hover: #fafafa;
+  --surface-inverse: #171717;
+  --surface-container-layer-00: #fafafa;
+  --surface-container-layer-01: #fafafa;
+  --surface-container-layer-02: #f5f5f5;
+  --surface-container-layer-03: #e5e5e5;
+  --background-primary: #ffffff;
+
+  /* older variables still used by parts of the app */
+  --bg-selection: #0000001f;
+  --text-title: #0a0a0a;
+  --text-caption: #737373;
+  --text-placeholder: #a3a3a3;
+  --text-link-default: #404040;
+  --text-link-hover: #0a0a0a;
+  --text-link-pressed: #0a0a0a;
+  --line-border: #e5e5e5;
+  --line-divider: #e5e5e5;
+  --line-default: #f5f5f5;
+  --line-card: #e5e5e5;
+  --fill-toolbar: #171717;
+  --fill-default: #171717;
+  --fill-hover: #404040;
+  --fill-pressed: #0a0a0a;
+  --fill-active: #f5f5f5;
+  --fill-list-hover: #0000000d;
+  --fill-list-active: #f5f5f5;
+  --content-blue-50: #fafafa;
+  --content-blue-100: #f5f5f5;
+  --content-blue-200: #00000033;
+  --content-blue-300: #404040;
+  --content-blue-400: #171717;
+  --content-blue-600: #0a0a0a;
+  --content-blue-700: #0a0a0a;
+  --content-blue-800: #0a0a0a;
+  --content-blue-900: #0a0a0a;
+  --content-on-fill-hover: #171717;
+  --bg-body: #ffffff;
+  --bg-base: #fafafa;
+  --bg-tips: #f5f5f5;
+  --function-info: #171717;
+  --note-header: #f5f5f5;
+  --scrollbar-thumb: #d4d4d4;
+  --scrollbar-track: #f5f5f5;
+  --selection: #e5e5e5;
+  --secondary-background: #fafafa;
+
+  /* shadcn-style component colours (neutral theme) */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 3.9%;
+  --tooltip: 0 0% 9%;
+  --tooltip-foreground: 0 0% 98%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 0 0% 96.1%;
+  --secondary-foreground: 0, 0%, 45%;
+  --muted: 0 0% 96.1%;
+  --muted-foreground: 0 0% 45.1%;
+  --placeholder: 0, 0%, 64%;
+  --accent: 0, 0%, 9%, 0.06;
+  --accent-foreground: 0 0% 9%;
+  --border: 0, 0%, 9%, 10%;
+  --input: 0, 0%, 9%, 10%;
+  --ring: 0 0% 45%;
+  --icon: 0, 0%, 45%;
+  --radius: 0.5rem;
+}
+
+:root[data-dark-mode='true'] {
+  --text-primary: #fafafa;
+  --text-secondary: #a3a3a3;
+  --text-tertiary: #737373;
+  --text-quaternary: #262626;
+  --text-inverse: #0a0a0a;
+  --text-action: #fafafa;
+  --text-action-hover: #d4d4d4;
+  --icon-primary: #fafafa;
+  --icon-secondary: #a3a3a3;
+  --icon-tertiary: #737373;
+  --icon-quaternary: #525252;
+
+  --border-primary: #262626;
+  --border-primary-hover: #404040;
+  --border-secondary: #d4d4d4;
+  --border-secondary-hover: #e5e5e5;
+  --border-tertiary: #fafafa;
+  --border-tertiary-hover: #ffffff;
+  --border-theme-thick: #a3a3a3;
+  --border-theme-thick-hover: #d4d4d4;
+
+  --fill-primary: #171717;
+  --fill-primary-hover: #262626;
+  --fill-secondary: #525252;
+  --fill-secondary-hover: #737373;
+  --fill-tertiary: #d4d4d4;
+  --fill-tertiary-hover: #e5e5e5;
+  --fill-quaternary: #fafafa;
+  --fill-quaternary-hover: #ffffff;
+  --fill-content-hover: #ffffff0d;
+  --fill-content-visible: #ffffff0d;
+  --fill-content-visible-hover: #ffffff1a;
+  /* buttons keep white text, so "primary" is a mid grey in dark mode */
+  --fill-theme-thick: #525252;
+  --fill-theme-thick-hover: #737373;
+  --fill-theme-select: #ffffff14;
+  --fill-text-select: #ffffff29;
+  --fill-button-active: #ffffff14;
+
+  --surface-primary: #171717;
+  --surface-primary-hover: #262626;
+  --surface-layer-01: #171717;
+  --surface-layer-01-hover: #262626;
+  --surface-layer-02: #1c1c1c;
+  --surface-layer-02-hover: #262626;
+  --surface-layer-03: #262626;
+  --surface-layer-03-hover: #303030;
+  --surface-layer-04: #2a2a2a;
+  --surface-layer-04-hover: #333333;
+  --surface-inverse: #262626;
+  --surface-container-layer-00: #171717;
+  --surface-container-layer-01: #171717;
+  --surface-container-layer-02: #262626;
+  --surface-container-layer-03: #404040;
+  --background-primary: #0a0a0a;
+
+  --bg-selection: #ffffff33;
+  --text-title: #fafafa;
+  --text-caption: #a3a3a3;
+  --text-placeholder: #737373;
+  --text-link-default: #d4d4d4;
+  --text-link-hover: #ffffff;
+  --text-link-pressed: #ffffff;
+  --line-border: #404040;
+  --line-divider: #262626;
+  --line-default: #262626;
+  --line-card: #262626;
+  --fill-toolbar: #171717;
+  --fill-default: #fafafa;
+  --fill-hover: #262626;
+  --fill-selector: #171717;
+  --fill-list-hover: #ffffff0d;
+  --fill-list-active: #262626;
+  --content-blue-50: #171717;
+  --content-blue-100: #262626;
+  --content-blue-200: #ffffff33;
+  --content-blue-300: #d4d4d4;
+  --content-blue-400: #e5e5e5;
+  --content-blue-600: #a3a3a3;
+  --content-blue-700: #a3a3a3;
+  --content-blue-800: #a3a3a3;
+  --content-blue-900: #a3a3a3;
+  --bg-body: #0a0a0a;
+  --bg-base: #171717;
+  --bg-tips: #262626;
+  --bg-header: #0a0a0acc;
+  --function-info: #a3a3a3;
+  --note-header: #171717;
+  --scrollbar-thumb: #404040;
+  --scrollbar-track: #171717;
+  --selection: #404040;
+  --secondary-background: #171717;
+  --input-background: #0a0a0a;
+
+  --background: 0 0% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --tooltip: 0 0% 9%;
+  --tooltip-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 14.9%;
+  --secondary-foreground: 0, 0%, 64%;
+  --muted: 0 0% 14.9%;
+  --muted-foreground: 0 0% 63.9%;
+  --placeholder: 0, 0%, 30%;
+  --accent: 0 0% 14.9%;
+  --accent-foreground: 0 0% 98%;
+  --border: 0, 0%, 98%, 0.08;
+  --input: 0, 0%, 98%, 0.08;
+  --ring: 0 0% 83.1%;
+}
