@@ -45,6 +45,10 @@ jobs:
           ref: ${{ env.WEB_SOURCE_REF }}
           path: app
 
+      - name: Apply CareHub branding (login page, tab title, icon)
+        working-directory: app
+        run: python3 ../carehub/carehub/rebrand.py
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
