@@ -91,8 +91,10 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
   const [busy, setBusy] = useState(false);
 
   const savePassword = async () => {
-    if (password.length < 6) {
-      onError('The password needs at least 6 characters.');
+    const problem = carehubPasswordProblem(password);
+
+    if (problem) {
+      onError(problem);
       return;
     }
 
@@ -154,7 +156,7 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
           {(account.email || '?').charAt(0).toUpperCase()}
         </div>
         <div className='min-w-0 flex-1'>
-          <div className='flex min-w-0 items-center gap-2'>
+          <div className='flex min-w-0 flex-wrap items-center gap-2'>
             <span className='truncate text-sm font-medium text-text-primary'>{account.email}</span>
             {isMe ? (
               <span className='shrink-0 rounded-full bg-fill-content-hover px-2 py-0.5 text-xs text-text-caption'>You</span>
@@ -164,12 +166,13 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
               <span className='shrink-0 rounded-full bg-fill-content-hover px-2 py-0.5 text-xs text-text-caption'>Joins at first sign-in</span>
             ) : null}
           </div>
-          <div className='truncate text-xs text-text-tertiary'>
+          <div className='text-xs text-text-tertiary'>
             Added {formatDate(account.created_at)} · Last sign-in {formatDate(account.last_sign_in_at)}
           </div>
         </div>
-        {mode === 'idle' && !isMe && (
-          <div className='flex shrink-0 gap-2'>
+      </div>
+      {mode === 'idle' && !isMe && (
+          <div className='mt-2 flex flex-wrap gap-2 pl-12'>
             {workspaceId && !account.in_workspace && !account.joins_workspace && (
               <Button variant='outline' size='sm' loading={busy} onClick={() => void setMembership(true)}>
                 Add to workspace
@@ -188,7 +191,6 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
             </Button>
           </div>
         )}
-      </div>
       {mode === 'password' && (
         <form
           className='mt-3 flex items-center gap-2 pl-12'
@@ -200,7 +202,7 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
           <Input
             autoFocus
             type='password'
-            placeholder='New password (at least 6 characters)'
+            placeholder='New password'
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className='w-72'
@@ -224,6 +226,17 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
       )}
     </div>
   );
+}
+
+export const CAREHUB_PASSWORD_RULES =
+  'At least 8 characters, with an uppercase letter, a lowercase letter and a symbol.';
+
+export function carehubPasswordProblem(password: string): string {
+  if (password.length < 8) return 'The password needs at least 8 characters.';
+  if (!/[A-Z]/.test(password)) return 'The password needs an uppercase letter.';
+  if (!/[a-z]/.test(password)) return 'The password needs a lowercase letter.';
+  if (!/[^A-Za-z0-9\s]/.test(password)) return 'The password needs a symbol (for example ! ? # or -).';
+  return '';
 }
 
 export function CareHubAccountsPanel({ myEmail }: { myEmail?: string }) {
@@ -271,8 +284,10 @@ export function CareHubAccountsPanel({ myEmail }: { myEmail?: string }) {
       return;
     }
 
-    if (password.length < 6) {
-      showError('The password needs at least 6 characters.');
+    const problem = carehubPasswordProblem(password);
+
+    if (problem) {
+      showError(problem);
       return;
     }
 
@@ -318,6 +333,7 @@ export function CareHubAccountsPanel({ myEmail }: { myEmail?: string }) {
           }}
         >
           <div className='text-sm font-medium text-text-primary'>Add an account</div>
+          <div className='text-xs text-text-tertiary'>Password: {CAREHUB_PASSWORD_RULES}</div>
           <div className='flex flex-wrap items-center gap-2'>
             <Input
               type='email'
@@ -329,7 +345,7 @@ export function CareHubAccountsPanel({ myEmail }: { myEmail?: string }) {
             />
             <Input
               type='password'
-              placeholder='Password (at least 6 characters)'
+              placeholder='Password'
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className='min-w-[220px] flex-1'
