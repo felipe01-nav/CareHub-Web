@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { executeAPIRequest, getAxios } from '@/application/services/js-services/http/core';
+import { useCurrentWorkspaceId } from '@/components/app/app.hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -14,6 +15,9 @@ export interface CareHubAccount {
   email: string;
   created_at?: string | null;
   last_sign_in_at?: string | null;
+  has_signed_in?: boolean;
+  in_workspace?: boolean;
+  joins_workspace?: boolean;
 }
 
 const BASE = '/api/carehub/admin';
@@ -75,8 +79,10 @@ export const CareHubAccountsIcon = LockIcon;
 
 type RowMode = 'idle' | 'password' | 'remove';
 
-function AccountRow({ account, onChanged, onError }: {
+function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
   account: CareHubAccount;
+  workspaceId?: string;
+  isMe: boolean;
   onChanged: (notice: string) => void;
   onError: (msg: string) => void;
 }) {
@@ -96,6 +102,31 @@ function AccountRow({ account, onChanged, onError }: {
       setMode('idle');
       setPassword('');
       onChanged(`New password saved for ${account.email}.`);
+    } catch (e) {
+      onError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setMembership = async (join: boolean) => {
+    if (!workspaceId) return;
+    setBusy(true);
+    try {
+      if (join) {
+        const res = await call<{ joined: boolean }>('post', `${BASE}/users/${account.id}/workspace`, {
+          workspace_id: workspaceId,
+        });
+
+        onChanged(
+          res?.joined
+            ? `${account.email} is now in this workspace.`
+            : `${account.email} will join this workspace when they first sign in.`
+        );
+      } else {
+        await call('delete', `${BASE}/users/${account.id}/workspace?workspace_id=${workspaceId}`);
+        onChanged(`${account.email} was taken out of this workspace. Their account still works.`);
+      }
     } catch (e) {
       onError(errorText(e));
     } finally {
@@ -123,13 +154,32 @@ function AccountRow({ account, onChanged, onError }: {
           {(account.email || '?').charAt(0).toUpperCase()}
         </div>
         <div className='min-w-0 flex-1'>
-          <div className='truncate text-sm font-medium text-text-primary'>{account.email}</div>
-          <div className='text-xs text-text-tertiary'>
+          <div className='flex min-w-0 items-center gap-2'>
+            <span className='truncate text-sm font-medium text-text-primary'>{account.email}</span>
+            {isMe ? (
+              <span className='shrink-0 rounded-full bg-fill-content-hover px-2 py-0.5 text-xs text-text-caption'>You</span>
+            ) : account.in_workspace ? (
+              <span className='shrink-0 rounded-full bg-fill-content-hover px-2 py-0.5 text-xs text-text-caption'>In this workspace</span>
+            ) : account.joins_workspace ? (
+              <span className='shrink-0 rounded-full bg-fill-content-hover px-2 py-0.5 text-xs text-text-caption'>Joins at first sign-in</span>
+            ) : null}
+          </div>
+          <div className='truncate text-xs text-text-tertiary'>
             Added {formatDate(account.created_at)} · Last sign-in {formatDate(account.last_sign_in_at)}
           </div>
         </div>
-        {mode === 'idle' && (
+        {mode === 'idle' && !isMe && (
           <div className='flex shrink-0 gap-2'>
+            {workspaceId && !account.in_workspace && !account.joins_workspace && (
+              <Button variant='outline' size='sm' loading={busy} onClick={() => void setMembership(true)}>
+                Add to workspace
+              </Button>
+            )}
+            {workspaceId && (account.in_workspace || account.joins_workspace) && (
+              <Button variant='ghost' size='sm' loading={busy} onClick={() => void setMembership(false)}>
+                Take out
+              </Button>
+            )}
             <Button variant='outline' size='sm' onClick={() => setMode('password')}>
               Set password
             </Button>
@@ -176,8 +226,10 @@ function AccountRow({ account, onChanged, onError }: {
   );
 }
 
-export function CareHubAccountsPanel() {
+export function CareHubAccountsPanel({ myEmail }: { myEmail?: string }) {
+  const workspaceId = useCurrentWorkspaceId();
   const [accounts, setAccounts] = useState<CareHubAccount[] | null>(null);
+  const [addToWorkspace, setAddToWorkspace] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [email, setEmail] = useState('');
@@ -186,14 +238,15 @@ export function CareHubAccountsPanel() {
 
   const load = useCallback(async () => {
     try {
-      const res = await call<{ users: CareHubAccount[] }>('get', `${BASE}/users`);
+      const query = workspaceId ? `?workspace_id=${workspaceId}` : '';
+      const res = await call<{ users: CareHubAccount[] }>('get', `${BASE}/users${query}`);
 
       setAccounts(res?.users ?? []);
     } catch (e) {
       setError(errorText(e));
       setAccounts([]);
     }
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
     void load();
@@ -225,10 +278,20 @@ export function CareHubAccountsPanel() {
 
     setAdding(true);
     try {
-      await call('post', `${BASE}/users`, { email: trimmed, password });
+      const joining = addToWorkspace && Boolean(workspaceId);
+
+      await call('post', `${BASE}/users`, {
+        email: trimmed,
+        password,
+        ...(joining ? { workspace_id: workspaceId } : {}),
+      });
       setEmail('');
       setPassword('');
-      showNotice(`${trimmed} can now sign in with the password you chose.`);
+      showNotice(
+        joining
+          ? `${trimmed} can now sign in with the password you chose, and will join this workspace at first sign-in.`
+          : `${trimmed} can now sign in with the password you chose.`
+      );
     } catch (e) {
       showError(errorText(e));
     } finally {
@@ -242,8 +305,8 @@ export function CareHubAccountsPanel() {
         <div className='flex flex-col gap-1'>
           <h2 className='text-xl font-semibold text-text-primary'>User accounts</h2>
           <p className='text-sm text-text-caption'>
-            Add people who can sign in to Care Hub, set a new password, or remove access. No emails are sent —
-            share the password with the person yourself.
+            Add people who can sign in to Care Hub, put them in this workspace, set a new password, or remove
+            access. No emails are sent — share the password with the person yourself.
           </p>
         </div>
 
@@ -276,6 +339,19 @@ export function CareHubAccountsPanel() {
               Add account
             </Button>
           </div>
+          {workspaceId && (
+            <label className='flex cursor-pointer items-center gap-2 text-sm text-text-caption'>
+              <input
+                type='checkbox'
+                checked={addToWorkspace}
+                onChange={(e) => setAddToWorkspace(e.target.checked)}
+                className='h-4 w-4'
+                style={{ accentColor: 'currentColor' }}
+                data-testid='carehub-account-join'
+              />
+              Also add them to this workspace
+            </label>
+          )}
         </form>
 
         {error && (
@@ -297,7 +373,14 @@ export function CareHubAccountsPanel() {
             {accounts === null && <div className='px-4 py-6 text-sm text-text-tertiary'>Loading…</div>}
             {accounts?.length === 0 && <div className='px-4 py-6 text-sm text-text-tertiary'>No accounts found.</div>}
             {accounts?.map((account) => (
-              <AccountRow key={account.id} account={account} onChanged={showNotice} onError={showError} />
+              <AccountRow
+                key={account.id}
+                account={account}
+                workspaceId={workspaceId}
+                isMe={Boolean(myEmail) && account.email?.toLowerCase() === myEmail?.toLowerCase()}
+                onChanged={showNotice}
+                onError={showError}
+              />
             ))}
           </div>
         </div>
