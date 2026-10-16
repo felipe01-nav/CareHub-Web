@@ -475,6 +475,8 @@ def main() -> int:
     pathlib.Path("public/carehub-icon.svg").write_text(FAVICON, encoding="utf-8")
     # Any leftover place that shows the AppFlowy logo now shows ours.
     pathlib.Path("public/appflowy.svg").write_text(FAVICON, encoding="utf-8")
+    # The AppFlowy logo used on the password / sign-up / reset pages becomes ours.
+    pathlib.Path("src/assets/icons/logo.svg").write_text(FAVICON, encoding="utf-8")
     dest = pathlib.Path(RICH_TEXT_DEST)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(RICH_TEXT_SRC.read_text(encoding="utf-8"), encoding="utf-8")
