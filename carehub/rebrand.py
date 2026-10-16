@@ -170,6 +170,97 @@ EDITS.update({
 })
 
 
+# CareHub: columns (2/3/4) and tabs in the page editor.
+EXTRA_FILES = {
+    HERE / "web" / "CareHubBlocks.tsx": "src/components/carehub/CareHubBlocks.tsx",
+}
+
+EDITS.update({
+    "src/components/editor/components/element/Element.tsx": [
+        ("import { renderColor } from '@/utils/color';\n",
+         "import { renderColor } from '@/utils/color';\n"
+         "import { CAREHUB_TAB, CAREHUB_TABS, CareHubTab, CareHubTabs } from '@/components/carehub/CareHubBlocks';\n", 1),
+        ("        BlockType.SimpleTableBlock,\n      ].includes(type as BlockType)\n",
+         "        BlockType.SimpleTableBlock,\n        BlockType.ColumnsBlock,\n        BlockType.ColumnBlock,\n"
+         "        CAREHUB_TABS,\n        CAREHUB_TAB,\n      ].includes(type as BlockType)\n", 1),
+        ("      case BlockType.PDFBlock:\n        return PDFBlock;\n",
+         "      case BlockType.PDFBlock:\n        return PDFBlock;\n"
+         "      case CAREHUB_TABS:\n        return CareHubTabs;\n"
+         "      case CAREHUB_TAB:\n        return CareHubTab;\n", 1),
+    ],
+    "src/components/editor/components/toolbar/block-controls/utils.ts": [
+        ("    if ([BlockType.ColumnBlock, BlockType.ColumnsBlock].includes(type)) {\n"
+         "      const firstDom = element?.closest(\n"
+         "        `[data-block-type]:not([data-block-type=\"${BlockType.ColumnBlock}\"]):not([data-block-type=\"${BlockType.ColumnsBlock}\"])`\n",
+         "    if ([BlockType.ColumnBlock, BlockType.ColumnsBlock, 'carehub_tab' as BlockType].includes(type)) {\n"
+         "      const firstDom = element?.closest(\n"
+         "        `[data-block-type]:not([data-block-type=\"${BlockType.ColumnBlock}\"]):not([data-block-type=\"${BlockType.ColumnsBlock}\"]):not([data-block-type=\"carehub_tab\"])`\n", 1),
+    ],
+    "src/application/slate-yjs/utils/editor.ts": [
+        ("    (parent && [BlockType.ColumnsBlock, BlockType.ColumnBlock, BlockType.SimpleTableCellBlock].includes(parent.get(YjsEditorKey.block_type)))\n",
+         "    (parent && [BlockType.ColumnsBlock, BlockType.ColumnBlock, BlockType.SimpleTableCellBlock, 'carehub_tab' as BlockType].includes(parent.get(YjsEditorKey.block_type)))\n", 1),
+        ("export function handleMergeBlockBackwardWithTxn(editor: YjsEditor, node: Element, point: Point) {\n"
+         "  const operations: (() => void)[] = [];\n  const sharedRoot = getSharedRoot(editor);\n",
+         "export function handleMergeBlockBackwardWithTxn(editor: YjsEditor, node: Element, point: Point) {\n"
+         "  const operations: (() => void)[] = [];\n  const sharedRoot = getSharedRoot(editor);\n\n"
+         "  // CareHub: never pull text across the start of a column or tab.\n"
+         "  if (carehubAtLayoutEdge(sharedRoot, (node as Element & { blockId?: string }).blockId, 'start')) return;\n", 1),
+        ("export function handleMergeBlockForwardWithTxn(editor: YjsEditor, node: Element, point: Point) {\n"
+         "  const operations: (() => void)[] = [];\n  const sharedRoot = getSharedRoot(editor);\n",
+         "export function handleMergeBlockForwardWithTxn(editor: YjsEditor, node: Element, point: Point) {\n"
+         "  const operations: (() => void)[] = [];\n  const sharedRoot = getSharedRoot(editor);\n\n"
+         "  // CareHub: never pull text across the end of a column or tab.\n"
+         "  if (carehubAtLayoutEdge(sharedRoot, (node as Element & { blockId?: string }).blockId, 'end')) return;\n", 1),
+        ("export function preventIndentNode(editor: YjsEditor, blockId: string) {\n",
+         "function carehubAtLayoutEdge(sharedRoot: YSharedRoot, blockId: string | undefined, edge: 'start' | 'end') {\n"
+         "  if (!blockId) return false;\n"
+         "  const parent = getParent(blockId, sharedRoot);\n"
+         "  const parentType = parent?.get(YjsEditorKey.block_type);\n\n"
+         "  if (!parent || ![BlockType.ColumnBlock, 'carehub_tab'].includes(parentType)) return false;\n"
+         "  const siblings = getChildrenArray(parent.get(YjsEditorKey.block_children), sharedRoot);\n"
+         "  const index = getBlockIndex(blockId, sharedRoot);\n\n"
+         "  return edge === 'start' ? index === 0 : index === (siblings?.length ?? 0) - 1;\n"
+         "}\n\n"
+         "export function preventIndentNode(editor: YjsEditor, blockId: string) {\n", 1),
+    ],
+    "src/application/slate-yjs/utils/yjs.ts": [
+        ("export function deleteBlock(sharedRoot: YSharedRoot, blockId: string) {\n  const block = getBlock(blockId, sharedRoot);\n",
+         "// CareHub: blocks being deleted right now (so an emptied tab can be refilled, but not while the tab itself goes).\n"
+         "const carehubDeleting = new Set<string>();\n\n"
+         "export function deleteBlock(sharedRoot: YSharedRoot, blockId: string) {\n"
+         "  carehubDeleting.add(blockId);\n"
+         "  try {\n    carehubDeleteBlock(sharedRoot, blockId);\n  } finally {\n    carehubDeleting.delete(blockId);\n  }\n}\n\n"
+         "function carehubDeleteBlock(sharedRoot: YSharedRoot, blockId: string) {\n  const block = getBlock(blockId, sharedRoot);\n", 1),
+        ("  // delete parent if it's empty column block\n",
+         "  // CareHub: a tab always keeps at least one empty line to type in\n"
+         "  if (parentType === 'carehub_tab' && afterDeletedLength === 0 && !carehubDeleting.has(parentId)) {\n"
+         "    updateBlockParent(sharedRoot, createBlock(sharedRoot, { ty: BlockType.Paragraph, data: {} }), parent, 0);\n"
+         "  }\n\n"
+         "  // delete parent if it's empty column block\n", 1),
+    ],
+    "src/components/editor/components/panels/slash-panel/SlashPanel.tsx": [
+        ("import { useEditorContext } from '@/components/editor/EditorContext';\n",
+         "import { useEditorContext } from '@/components/editor/EditorContext';\n"
+         "import {\n  CareHubColumnsIcon,\n  CareHubTabsIcon,\n  carehubInsertColumns,\n  carehubInsertTabs,\n"
+         "} from '@/components/carehub/CareHubBlocks';\n", 1),
+        ("      {\n        label: t('document.slashMenu.name.callout'),\n",
+         "      ...[2, 3, 4].map((count) => ({\n"
+         "        label: `${count} columns`,\n"
+         "        key: `carehubColumns${count}`,\n"
+         "        icon: <CareHubColumnsIcon count={count} />,\n"
+         "        group: SlashMenuGroupKey.AdvancedBlocks,\n"
+         "        keywords: ['columns', 'column', 'layout', 'side by side', `${count} columns`, `${count}col`],\n"
+         "        onClick: () => {\n          carehubInsertColumns(editor, count);\n        },\n"
+         "      })),\n"
+         "      {\n        label: 'Tabs',\n        key: 'carehubTabs',\n        icon: <CareHubTabsIcon />,\n"
+         "        group: SlashMenuGroupKey.AdvancedBlocks,\n"
+         "        keywords: ['tabs', 'tab', 'layout', 'sections'],\n"
+         "        onClick: () => {\n          carehubInsertTabs(editor);\n        },\n      },\n"
+         "      {\n        label: t('document.slashMenu.name.callout'),\n", 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
@@ -187,6 +278,10 @@ def main() -> int:
     dest = pathlib.Path(RICH_TEXT_DEST)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(RICH_TEXT_SRC.read_text(encoding="utf-8"), encoding="utf-8")
+    for extra_src, extra_dest in EXTRA_FILES.items():
+        target = pathlib.Path(extra_dest)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(extra_src.read_text(encoding="utf-8"), encoding="utf-8")
     if failed:
         return 1
     print("CareHub rebrand: done")
