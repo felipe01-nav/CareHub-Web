@@ -62,11 +62,15 @@ export interface CalEvent {
   icloud?: ICloudRef;
 }
 
+type Provider = 'icloud' | 'google';
+
 interface ICloudRef {
   href: string;
   etag: string;
   uid: string;
   calendar: string;
+  /** Which connected account the event lives in (iCloud when missing). */
+  provider?: Provider;
 }
 
 interface ICloudCalendar {
@@ -92,6 +96,71 @@ interface ICloudItem {
 }
 
 const ICLOUD_PREFIX = 'icloud:';
+const GOOGLE_PREFIX = 'google:';
+const PROVIDER_NAME: Record<Provider, string> = { icloud: 'iCloud', google: 'Google' };
+const OFF_STATUS: ICloudStatus = { enabled: false, connected: false };
+
+function prefixOf(p: Provider) {
+  return p === 'google' ? GOOGLE_PREFIX : ICLOUD_PREFIX;
+}
+
+function providerOf(target: string): Provider | null {
+  if (target.startsWith(ICLOUD_PREFIX)) return 'icloud';
+  if (target.startsWith(GOOGLE_PREFIX)) return 'google';
+  return null;
+}
+
+function refProvider(ref: ICloudRef): Provider {
+  return ref.provider ?? 'icloud';
+}
+
+/** Calendar entries from a connected iCloud or Google account. */
+function remoteCalEvents(
+  p: Provider,
+  status: ICloudStatus,
+  items: ICloudItem[],
+  moves: Record<string, { start: number; end: number }>,
+  hidden: string[],
+  from: number,
+  to: number
+): CalEvent[] {
+  const out: CalEvent[] = [];
+  const calendars = status.calendars ?? [];
+
+  for (const item of items) {
+    const calendarId = prefixOf(p) + item.calendar;
+
+    if (hidden.includes(calendarId)) continue;
+    const cal = calendars.find((c) => c.url === item.calendar);
+
+    if (!cal) continue;
+    // Repeating iCloud events are shown but changed in the Calendar app.
+    const repeating = item.events.length > 1 || item.events.some((e) => e.rrule);
+    const moved = moves[item.href];
+
+    for (const o of expandIcs(item.events, from, to, `${p === 'google' ? 'gc' : 'ic'}:${item.href}`)) {
+      const editable = !cal.read_only && !repeating && Boolean(o.uid);
+
+      out.push({
+        key: o.key,
+        calendarId,
+        calendarName: `${cal.name} (${PROVIDER_NAME[p]})`,
+        color: cal.color || COLORS[2],
+        title: o.title || '(No title)',
+        start: moved ? moved.start : o.start,
+        end: moved ? moved.end : o.end,
+        allDay: o.allDay,
+        location: o.location,
+        notes: o.description,
+        url: o.url,
+        readOnly: !editable,
+        icloud: editable ? { href: item.href, etag: item.etag, uid: o.uid, calendar: item.calendar, provider: p } : undefined,
+      });
+    }
+  }
+
+  return out;
+}
 
 interface FeedState {
   events: IcsEvent[];
@@ -484,27 +553,27 @@ export async function loadUpcomingEvents(days = 7, limit = 6): Promise<CalEvent[
     );
   };
 
-  const icloud = async () => {
-    const status = await call<ICloudStatus>('get', `${API}/icloud`);
+  const remote = async (p: Provider) => {
+    const status = await call<ICloudStatus>('get', `${API}/${p}`);
 
     if (!status?.connected) return;
     const res = await call<{ events: Array<{ calendar: string; href: string; etag: string; ics: string }> }>(
       'get',
-      `${API}/icloud/events?from=${from}&to=${to}`
+      `${API}/${p}/events?from=${from}&to=${to}`
     );
 
     for (const item of res?.events ?? []) {
-      const calendarId = ICLOUD_PREFIX + item.calendar;
+      const calendarId = prefixOf(p) + item.calendar;
 
       if (hidden.includes(calendarId)) continue;
       const cal = (status.calendars ?? []).find((c) => c.url === item.calendar);
 
       if (!cal) continue;
-      for (const o of expandIcs(parseIcs(item.ics), from, to, `ic:${item.href}`)) {
+      for (const o of expandIcs(parseIcs(item.ics), from, to, `${p === 'google' ? 'gc' : 'ic'}:${item.href}`)) {
         out.push({
           key: o.key,
           calendarId,
-          calendarName: `${cal.name} (iCloud)`,
+          calendarName: `${cal.name} (${PROVIDER_NAME[p]})`,
           color: cal.color || COLORS[2],
           title: o.title || '(No title)',
           start: o.start,
@@ -519,7 +588,7 @@ export async function loadUpcomingEvents(days = 7, limit = 6): Promise<CalEvent[
     }
   };
 
-  await Promise.allSettled([own(), feeds(), icloud()]);
+  await Promise.allSettled([own(), feeds(), remote('icloud'), remote('google')]);
 
   return out
     .filter((e) => (e.allDay ? e.end > from : Math.max(e.end, e.start + 1) > now))
@@ -633,6 +702,8 @@ export default function CareHubCalendarPage() {
   const [icloud, setIcloud] = useState<ICloudStatus>({ enabled: false, connected: false });
   const [icloudItems, setIcloudItems] = useState<ICloudItem[]>([]);
   const [icloudMoves, setIcloudMoves] = useState<Record<string, { start: number; end: number }>>({});
+  const [google, setGoogle] = useState<ICloudStatus>(OFF_STATUS);
+  const [googleItems, setGoogleItems] = useState<ICloudItem[]>([]);
   const [defaultTarget, setDefaultTarget] = useLocalState<string>('carehub-calendar-default-target', OWN_ID);
   const dragRef = useRef<DragState | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -801,46 +872,86 @@ export default function CareHubCalendarPage() {
     return () => window.clearInterval(timer);
   }, [loadIcloud, reloadTick, icloud.connected]);
 
-  const icloudEvents = useCallback(
-    (from: number, to: number) => {
-      const out: CalEvent[] = [];
-      const calendars = icloud.calendars ?? [];
+  // ---- private Google calendars (signed in with Google) ----
+  const loadGoogleStatus = useCallback(async () => {
+    try {
+      const res = await call<ICloudStatus>('get', `${API}/google`);
 
-      for (const item of icloudItems) {
-        const calendarId = ICLOUD_PREFIX + item.calendar;
+      setGoogle(res ?? OFF_STATUS);
+    } catch {
+      setGoogle(OFF_STATUS);
+    }
+  }, []);
 
-        if (hidden.includes(calendarId)) continue;
-        const cal = calendars.find((c) => c.url === item.calendar);
+  useEffect(() => {
+    void loadGoogleStatus();
+  }, [loadGoogleStatus]);
 
-        if (!cal) continue;
-        // Repeating events are shown but changed in the Calendar app.
-        const repeating = item.events.length > 1 || item.events.some((e) => e.rrule);
-        const moved = icloudMoves[item.href];
+  // Back from Google's sign-in page: show what happened, then tidy the address.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const failed = params.get('google_error');
 
-        for (const o of expandIcs(item.events, from, to, `ic:${item.href}`)) {
-          const editable = !cal.read_only && !repeating && Boolean(o.uid);
+    if (!params.has('google') && !failed) return;
+    if (failed) setError(`Google Calendar: ${failed}`);
+    params.delete('google');
+    params.delete('google_error');
+    const rest = params.toString();
 
-          out.push({
-            key: o.key,
-            calendarId,
-            calendarName: `${cal.name} (iCloud)`,
-            color: cal.color || COLORS[2],
-            title: o.title || '(No title)',
-            start: moved ? moved.start : o.start,
-            end: moved ? moved.end : o.end,
-            allDay: o.allDay,
-            location: o.location,
-            notes: o.description,
-            url: o.url,
-            readOnly: !editable,
-            icloud: editable ? { href: item.href, etag: item.etag, uid: o.uid, calendar: item.calendar } : undefined,
-          });
-        }
-      }
+    window.history.replaceState(window.history.state, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
 
-      return out;
+  const loadGoogle = useCallback(async () => {
+    if (!google.connected) {
+      setGoogleItems([]);
+      return;
+    }
+
+    const from = Math.min(rangeStart, startOfDay(Date.now())) - DAY;
+    const to = Math.max(rangeEnd, Date.now() + 2 * DAY) + DAY;
+
+    try {
+      const res = await call<{ events: Array<{ calendar: string; href: string; etag: string; ics: string }> }>(
+        'get',
+        `${API}/google/events?from=${from}&to=${to}`
+      );
+
+      setGoogleItems(
+        (res?.events ?? []).map((item) => ({
+          calendar: item.calendar,
+          href: item.href,
+          etag: item.etag,
+          events: parseIcs(item.ics),
+        }))
+      );
+      setIcloudMoves({});
+    } catch (err) {
+      setError(`Could not load Google Calendar: ${errorText(err)}`);
+    }
+  }, [google.connected, rangeStart, rangeEnd]);
+
+  useEffect(() => {
+    void loadGoogle();
+    if (!google.connected) return;
+    const timer = window.setInterval(() => void loadGoogle(), 5 * 60000);
+
+    return () => window.clearInterval(timer);
+  }, [loadGoogle, reloadTick, google.connected]);
+
+  const reloadRemote = useCallback(
+    async (p: Provider) => {
+      if (p === 'google') await loadGoogle();
+      else await loadIcloud();
     },
-    [hidden, icloud.calendars, icloudItems, icloudMoves]
+    [loadGoogle, loadIcloud]
+  );
+
+  const icloudEvents = useCallback(
+    (from: number, to: number) => [
+      ...remoteCalEvents('icloud', icloud, icloudItems, icloudMoves, hidden, from, to),
+      ...remoteCalEvents('google', google, googleItems, icloudMoves, hidden, from, to),
+    ],
+    [hidden, icloud, icloudItems, icloudMoves, google, googleItems]
   );
 
   // ---- all events in view ----
@@ -958,7 +1069,7 @@ export default function CareHubCalendarPage() {
     setEditor({
       id: e.id,
       icloud: e.icloud,
-      target: e.icloud ? ICLOUD_PREFIX + e.icloud.calendar : OWN_ID,
+      target: e.icloud ? prefixOf(refProvider(e.icloud)) + e.icloud.calendar : OWN_ID,
       title: e.title === '(No title)' ? '' : e.title,
       startDate: toDateInput(e.start),
       startTime: toTimeInput(e.start),
@@ -996,9 +1107,10 @@ export default function CareHubCalendarPage() {
         color: state.color,
       };
 
-      const target = state.icloud ? ICLOUD_PREFIX + state.icloud.calendar : state.target || OWN_ID;
+      const target = state.icloud ? prefixOf(refProvider(state.icloud)) + state.icloud.calendar : state.target || OWN_ID;
+      const provider = providerOf(target);
 
-      if (target.startsWith(ICLOUD_PREFIX)) {
+      if (provider) {
         const icloudBody = {
           ...body,
           start_day: state.allDay ? toDateInput(start).replace(/-/g, '') : '',
@@ -1006,18 +1118,18 @@ export default function CareHubCalendarPage() {
         };
 
         if (state.icloud) {
-          await call('put', `${API}/icloud/events`, {
+          await call('put', `${API}/${provider}/events`, {
             ...icloudBody,
             href: state.icloud.href,
             etag: state.icloud.etag,
             uid: state.icloud.uid,
           });
         } else {
-          await call('post', `${API}/icloud/events`, { ...icloudBody, calendar: target.slice(ICLOUD_PREFIX.length) });
+          await call('post', `${API}/${provider}/events`, { ...icloudBody, calendar: target.slice(prefixOf(provider).length) });
         }
 
         if (!state.icloud) setDefaultTarget(target);
-        await loadIcloud();
+        await reloadRemote(provider);
         return;
       }
 
@@ -1029,15 +1141,17 @@ export default function CareHubCalendarPage() {
 
       await loadOwn();
     },
-    [loadIcloud, loadOwn, setDefaultTarget]
+    [reloadRemote, loadOwn, setDefaultTarget]
   );
 
   const deleteEvent = useCallback(
     async (e: { id?: string; icloud?: ICloudRef }) => {
       if (e.icloud) {
-        await call('post', `${API}/icloud/events/delete`, { href: e.icloud.href, etag: e.icloud.etag });
+        const p = refProvider(e.icloud);
+
+        await call('post', `${API}/${p}/events/delete`, { href: e.icloud.href, etag: e.icloud.etag });
         setSelected(null);
-        await loadIcloud();
+        await reloadRemote(p);
         return;
       }
 
@@ -1046,7 +1160,7 @@ export default function CareHubCalendarPage() {
       setSelected(null);
       await loadOwn();
     },
-    [loadIcloud, loadOwn]
+    [reloadRemote, loadOwn]
   );
 
   const moveEvent = useCallback(
@@ -1056,7 +1170,7 @@ export default function CareHubCalendarPage() {
 
         setIcloudMoves((prev) => ({ ...prev, [ref.href]: { start, end } }));
         try {
-          await call('put', `${API}/icloud/events`, {
+          await call('put', `${API}/${refProvider(ref)}/events`, {
             href: ref.href,
             etag: ref.etag,
             uid: ref.uid,
@@ -1073,7 +1187,7 @@ export default function CareHubCalendarPage() {
           setError(`Could not move the event: ${errorText(err)}`);
         }
 
-        await loadIcloud();
+        await reloadRemote(refProvider(ref));
         return;
       }
 
@@ -1095,7 +1209,7 @@ export default function CareHubCalendarPage() {
 
       await loadOwn();
     },
-    [loadIcloud, loadOwn, ownEvents]
+    [reloadRemote, loadOwn, ownEvents]
   );
 
   // ---- keyboard ----
@@ -1320,6 +1434,12 @@ export default function CareHubCalendarPage() {
           if (!next.connected) setIcloudItems([]);
           if (!next.connected && defaultTarget.startsWith(ICLOUD_PREFIX)) setDefaultTarget(OWN_ID);
         }}
+        google={google}
+        onGoogleChanged={(next) => {
+          setGoogle(next);
+          if (!next.connected) setGoogleItems([]);
+          if (!next.connected && defaultTarget.startsWith(GOOGLE_PREFIX)) setDefaultTarget(OWN_ID);
+        }}
       />
       </div>
       )}
@@ -1458,6 +1578,9 @@ export default function CareHubCalendarPage() {
             ...(icloud.calendars ?? [])
               .filter((c) => !c.read_only)
               .map((c) => ({ id: ICLOUD_PREFIX + c.url, name: `${c.name} (iCloud)`, color: c.color || COLORS[2] })),
+            ...(google.calendars ?? [])
+              .filter((c) => !c.read_only)
+              .map((c) => ({ id: GOOGLE_PREFIX + c.url, name: `${c.name} (Google)`, color: c.color || COLORS[2] })),
           ]}
           onClose={() => setEditor(null)}
           onSave={async (state) => {
@@ -1500,6 +1623,8 @@ function CalendarSidebar(props: {
   onFeedsChanged: () => Promise<void>;
   icloud: ICloudStatus;
   onIcloudChanged: (next: ICloudStatus) => void;
+  google: ICloudStatus;
+  onGoogleChanged: (next: ICloudStatus) => void;
 }) {
   const { cursor, view, days, onPickDay, onCreate, nextUp, now, onOpenEvent, feeds, feedData, hidden, onToggle } = props;
   const [miniMonth, setMiniMonth] = useState(() => startOfMonth(cursor));
@@ -1672,6 +1797,7 @@ function CalendarSidebar(props: {
         })}
         {removeError && <div className='px-1 pt-1 text-xs text-text-secondary'>{removeError}</div>}
         <ICloudSection status={props.icloud} hidden={hidden} onToggle={onToggle} onChanged={props.onIcloudChanged} />
+        <GoogleSection status={props.google} hidden={hidden} onToggle={onToggle} onChanged={props.onGoogleChanged} />
         {adding ? (
           <AddCalendarForm
             onCancel={() => setAdding(false)}
@@ -1836,6 +1962,109 @@ function ICloudSection({
         </Button>
       </div>
     </form>
+  );
+}
+
+function GoogleSection({
+  status,
+  hidden,
+  onToggle,
+  onChanged,
+}: {
+  status: ICloudStatus;
+  hidden: string[];
+  onToggle: (id: string) => void;
+  onChanged: (next: ICloudStatus) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmOff, setConfirmOff] = useState(false);
+
+  if (!status.enabled) {
+    return (
+      <div className='mt-1 px-2 py-1.5 text-xs text-text-tertiary' data-testid='carehub-google-off'>
+        Google Calendar sign-in isn&apos;t switched on for this Care Hub yet. Ask your admin to turn it on.
+      </div>
+    );
+  }
+
+  const connect = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await call<{ url: string }>('post', `${API}/google/connect`, { origin: window.location.origin });
+
+      if (!res?.url) throw new Error('Google sign-in could not be started. Please try again.');
+      // Google's own sign-in page; it sends you back to this calendar afterwards.
+      window.location.assign(res.url);
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy(true);
+    try {
+      await call('delete', `${API}/google`);
+      setConfirmOff(false);
+      onChanged({ enabled: true, connected: false });
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (status.connected) {
+    return (
+      <div className='mt-2' data-testid='carehub-google'>
+        {(status.calendars ?? []).map((c) => (
+          <CalendarRow
+            key={c.url}
+            name={c.name}
+            color={c.color || COLORS[2]}
+            visible={!hidden.includes(GOOGLE_PREFIX + c.url)}
+            onToggle={() => onToggle(GOOGLE_PREFIX + c.url)}
+            note={c.read_only ? 'Google · read-only' : 'Google · private'}
+          />
+        ))}
+        {status.error && <div className='px-1 pt-1 text-xs text-text-secondary'>Google: {status.error}</div>}
+        {error && <div className='px-1 pt-1 text-xs text-text-error'>{error}</div>}
+        <div className='flex items-center gap-2 px-1 pt-1 text-[11px] text-text-tertiary'>
+          <span className='min-w-0 flex-1 truncate'>{status.apple_id}</span>
+          {confirmOff ? (
+            <>
+              <button type='button' className='font-medium text-text-primary underline' disabled={busy} onClick={() => void disconnect()}>
+                Disconnect
+              </button>
+              <button type='button' onClick={() => setConfirmOff(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button type='button' className='hover:text-text-primary' onClick={() => setConfirmOff(true)}>
+              Disconnect Google
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type='button'
+        disabled={busy}
+        onClick={() => void connect()}
+        className='mt-1 w-full rounded-[8px] px-2 py-1.5 text-left text-sm text-text-secondary hover:bg-fill-content-hover hover:text-text-primary'
+        data-testid='carehub-google-connect'
+      >
+        {busy ? 'Opening Google…' : '+ Connect Google Calendar (private)'}
+      </button>
+      {error && <div className='px-2 pb-1 text-xs text-text-error'>{error}</div>}
+    </div>
   );
 }
 
@@ -2455,7 +2684,7 @@ function EventEditor({
             onChange={(e) => set({ notes: e.target.value })}
           />
         </div>
-        <div className={cn('flex items-center gap-2', (state.icloud || (state.target || OWN_ID).startsWith(ICLOUD_PREFIX)) && 'hidden')}>
+        <div className={cn('flex items-center gap-2', (state.icloud || providerOf(state.target || OWN_ID)) && 'hidden')}>
           <span className={labelCls}>Colour</span>
           {COLORS.map((c) => (
             <button
