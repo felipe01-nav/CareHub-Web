@@ -716,20 +716,41 @@ EXTRA_FILES[HERE / "web" / "CareHubIcs.ts"] = "src/components/carehub/CareHubIcs
 
 EDITS["src/components/app/AppRouter.tsx"] = [
     ("import TrashPage from '@/pages/TrashPage';\n",
-     "import TrashPage from '@/pages/TrashPage';\nimport CareHubCalendarPage from '@/components/carehub/CareHubCalendar';\n", 1),
+     "import TrashPage from '@/pages/TrashPage';\nimport CareHubCalendarPage from '@/components/carehub/CareHubCalendar';\n"
+     "import CareHubMessagesPage from '@/components/carehub/CareHubMessages';\n", 1),
     ("        <Route path={'trash'} element={<TrashPage />} />\n",
-     "        <Route path={'trash'} element={<TrashPage />} />\n        <Route path={'calendar'} element={<CareHubCalendarPage />} />\n", 1),
+     "        <Route path={'trash'} element={<TrashPage />} />\n        <Route path={'calendar'} element={<CareHubCalendarPage />} />\n"
+     "        <Route path={'messages'} element={<CareHubMessagesPage />} />\n", 1),
 ]
 
+EXTRA_FILES[HERE / "web" / "CareHubMessages.tsx"] = "src/components/carehub/CareHubMessages.tsx"
+EXTRA_FILES[HERE / "web" / "CareHubSidebarHome.tsx"] = "src/components/carehub/CareHubSidebarHome.tsx"
+
+# Sidebar: Home / Messages / Calendar buttons and "Upcoming events" (like Notion)
 EDITS["src/components/app/SideBar.tsx"] = [
     ("import { NotificationBell } from '@/components/notifications';\n",
-     "import { NotificationBell } from '@/components/notifications';\nimport { CareHubCalendarNavItem } from '@/components/carehub/CareHubCalendar';\n", 1),
-    ("          <Search />\n", "          <Search />\n          <CareHubCalendarNavItem />\n", 1),
+     "import { NotificationBell } from '@/components/notifications';\n"
+     "import { CareHubSidebarTabs, CareHubUpcomingEvents } from '@/components/carehub/CareHubSidebarHome';\n", 1),
+    ("          <Search />\n", "          <Search />\n          <CareHubSidebarTabs />\n", 1),
+    ("        <Outline width={drawerWidth} />\n",
+     "        <CareHubUpcomingEvents />\n        <Outline width={drawerWidth} />\n", 1),
+]
+
+# Phone menu: the same buttons and list
+EDITS["src/components/_shared/mobile-topbar/MobileFolder.tsx"] = [
+    ("import MobileOutline from 'src/components/_shared/mobile-outline/MobileOutline';\n",
+     "import MobileOutline from 'src/components/_shared/mobile-outline/MobileOutline';\n"
+     "import { CareHubSidebarTabs, CareHubUpcomingEvents } from '@/components/carehub/CareHubSidebarHome';\n", 1),
+    ("          <MobileMore onClose={onClose} />\n        </div>\n",
+     "          <MobileMore onClose={onClose} />\n        </div>\n"
+     "        <CareHubSidebarTabs onNavigate={onClose} />\n", 1),
+    ("        <div className={'transform-gpu px-2 pb-[60px]'}>\n          {outline && (\n",
+     "        <div className={'transform-gpu px-2 pb-[60px]'}>\n          <CareHubUpcomingEvents onNavigate={onClose} />\n          {outline && (\n", 1),
 ]
 
 EDITS["src/components/app/header/AppHeader.tsx"] = [
     ("  const isTrash = window.location.pathname === '/app/trash';\n",
-     "  const isTrash = window.location.pathname === '/app/trash' || window.location.pathname === '/app/calendar';\n", 1),
+     "  const isTrash = window.location.pathname === '/app/trash' || window.location.pathname === '/app/calendar' || window.location.pathname === '/app/messages';\n", 1),
 ]
 
 
