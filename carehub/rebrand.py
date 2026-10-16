@@ -331,6 +331,79 @@ EDITS.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# CareHub: conditional logic in forms ("show this question only when ...").
+# Set it from a question's ... menu -> Conditional logic. The preview and the
+# public form only show, check and send the questions whose rule is met.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubFormLogic.tsx"] = "src/components/carehub/CareHubFormLogic.tsx"
+
+EDITS.update({
+    "src/components/database/form/FormQuestionCard.tsx": EDITS["src/components/database/form/FormQuestionCard.tsx"] + [
+        ("import { cn } from '@/lib/utils';\n",
+         "import { CareHubFormLogic, CareHubLogicMenuItemContent } from '@/components/carehub/CareHubFormLogic';\n"
+         "import { cn } from '@/lib/utils';\n", 1),
+        ("  const [menuOpen, setMenuOpen] = useState(false);\n",
+         "  const [menuOpen, setMenuOpen] = useState(false);\n"
+         "  const [carehubLogicOpen, setCarehubLogicOpen] = useState(false);\n", 1),
+        ("              <DropdownMenuSeparator />\n              <DropdownMenuItem\n                disabled={index === 0}\n",
+         "              <DropdownMenuItem data-testid='carehub-logic-menu-item' onSelect={() => setCarehubLogicOpen(true)}>\n"
+         "                <CareHubLogicMenuItemContent />\n"
+         "              </DropdownMenuItem>\n"
+         "              <DropdownMenuSeparator />\n              <DropdownMenuItem\n                disabled={index === 0}\n", 1),
+        ("      <div className='mt-3'>\n",
+         "      <CareHubFormLogic questionId={questionId} open={carehubLogicOpen} onOpenChange={setCarehubLogicOpen} />\n\n"
+         "      <div className='mt-3'>\n", 1),
+    ],
+    "src/components/database/form/FormBuilderView.tsx": [
+        ("import { FormShareProvider } from './FormShareContext';\n",
+         "import { FormShareProvider } from './FormShareContext';\n"
+         "import { CareHubFormLogicProvider } from '@/components/carehub/CareHubFormLogic';\n", 1),
+        ("          <DraggableQuestionList\n            questions={resolved}\n",
+         "          <CareHubFormLogicProvider questions={resolved}>\n"
+         "          <DraggableQuestionList\n            questions={resolved}\n", 1),
+        ("            canWriteRef={canWriteRef}\n          />\n        )}\n",
+         "            canWriteRef={canWriteRef}\n          />\n          </CareHubFormLogicProvider>\n        )}\n", 1),
+    ],
+    "src/components/database/form/FormPreviewButton.tsx": [
+        ("import { Button } from '@/components/ui/button';\n",
+         "import { Button } from '@/components/ui/button';\n"
+         "import { useDatabaseView } from '@/application/database-yjs/context';\n"
+         "import { carehubAttachShowIf } from '@/components/carehub/CareHubFormLogic';\n", 1),
+        ("  const [open, setOpen] = useState(false);\n",
+         "  const [open, setOpen] = useState(false);\n  const carehubView = useDatabaseView();\n", 1),
+        ("    return buildFormPreviewSchema(snapshot, fieldsMap);\n",
+         "    return carehubAttachShowIf(buildFormPreviewSchema(snapshot, fieldsMap), carehubView);\n", 1),
+        ("  }, [open, snapshot, fieldsMap, fieldsVersion]);\n",
+         "  }, [open, snapshot, fieldsMap, fieldsVersion, carehubView]);\n", 1),
+    ],
+    "src/components/form/FormBody.tsx": [
+        ("import { useCallback, useEffect, useRef, useState } from 'react';\n",
+         "import { useCallback, useEffect, useMemo, useRef, useState } from 'react';\n", 1),
+        ("import { Button } from '@/components/ui/button';\n",
+         "import { Button } from '@/components/ui/button';\n"
+         "import { carehubPickAnswers, carehubVisibleQuestions } from '@/components/carehub/CareHubFormLogic';\n", 1),
+        ("  const handleSubmit = useCallback(async () => {\n",
+         "  // CareHub: questions with a rule only appear (and only count) when the rule is met.\n"
+         "  const carehubVisible = useMemo(() => carehubVisibleQuestions(schema.questions, answers), [schema.questions, answers]);\n"
+         "  const carehubSubmitAnswers = useMemo(() => carehubPickAnswers(answers, carehubVisible), [answers, carehubVisible]);\n\n"
+         "  const handleSubmit = useCallback(async () => {\n", 1),
+        ("    const localErrors = collectLocalErrors(schema.questions, answers);\n",
+         "    const answers = carehubSubmitAnswers;\n"
+         "    const localErrors = collectLocalErrors(\n      schema.questions.filter((q) => carehubVisible.has(q.id)),\n      answers\n    );\n", 1),
+        ("      setAnswers(uploadedAnswers);\n",
+         "      setAnswers((prev) => ({ ...prev, ...uploadedAnswers }));\n", 1),
+        ("  }, [answers, previewMode, retryBlocked, schema.questions, token]);\n",
+         "  }, [carehubSubmitAnswers, carehubVisible, previewMode, retryBlocked, schema.questions, token]);\n", 1),
+        ("          {schema.questions.map((q) => (\n",
+         "          {schema.questions\n            .filter((q) => carehubVisible.has(q.id))\n            .map((q) => (\n", 1),
+        ("        Never submit sensitive personal information, like passwords, through AppFlowy Forms.\n",
+         "        Never submit passwords through this form.\n", 1),
+        ("      {!previewMode && !schema.hide_branding ? (\n", "      {false ? (\n", 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
