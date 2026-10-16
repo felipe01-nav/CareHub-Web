@@ -646,7 +646,8 @@ EDITS["src/components/database/components/grid/grid-table/GridVirtualizer.tsx"] 
      "  const [carehubFrozenRaw] = useCarehubFrozenCount();\n"
      "  const carehubFrozen = clampFrozenCount(carehubFrozenRaw, columns);\n"
      "  const { parentRef, virtualizer, columnVirtualizer, scrollMarginTop, isReady } = useGridVirtualizer({\n    data,\n    columns,\n    frozenCount: carehubFrozen,\n  });\n"
-     "  const carehubFreezeOrigin = Number(columnVirtualizer.options.paddingStart) || 0;\n"
+     "  // CareHub: inside a page the first columns stick where the page text starts.\n"
+     "  const carehubFreezeOrigin = isDocumentBlock ? 0 : Number(columnVirtualizer.options.paddingStart) || 0;\n"
      "  const carehubFreezeValue = useMemo(\n    () => ({ count: carehubFrozen, origin: carehubFreezeOrigin }),\n    [carehubFrozen, carehubFreezeOrigin]\n  );\n", 1),
     ("    <GridDragContext.Provider value={contextValue}>\n",
      "    <GridDragContext.Provider value={contextValue}>\n      <CarehubFreezeContext.Provider value={carehubFreezeValue}>\n", 1),
@@ -893,5 +894,43 @@ EDITS["src/components/app/hooks/useViewOperations.ts"] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# CareHub: tables inside a page line up with the page text. The row buttons
+# (+ and drag) sit in the page margin on the left, like Notion, instead of
+# pushing the columns ~96px to the right.
+# ---------------------------------------------------------------------------
+EDITS["src/components/database/components/grid/grid-table/useGridVirtualizer.ts"] += [
+    ("export const PADDING_INLINE = getPlatform().isMobile ? 21 : 96;\n",
+     "export const PADDING_INLINE = getPlatform().isMobile ? 21 : 96;\n"
+     "// CareHub: room for the row buttons when a table sits inside a page.\n"
+     "export const CAREHUB_GRID_GUTTER = 56;\n", 1),
+    ("  const effectivePaddingStart = paddingStart || PADDING_INLINE;\n  const effectivePaddingEnd = paddingEnd || PADDING_INLINE;\n",
+     "  const effectivePaddingStart = isDocumentBlock ? CAREHUB_GRID_GUTTER : paddingStart || PADDING_INLINE;\n"
+     "  const effectivePaddingEnd = isDocumentBlock ? 0 : paddingEnd || PADDING_INLINE;\n", 1),
+]
+EDITS["src/components/database/components/grid/grid-table/GridVirtualizer.tsx"] += [
+    ("import { PADDING_INLINE, useGridVirtualizer } from '@/components/database/components/grid/grid-table/useGridVirtualizer';\n",
+     "import {\n  CAREHUB_GRID_GUTTER,\n  PADDING_INLINE,\n  useGridVirtualizer,\n} from '@/components/database/components/grid/grid-table/useGridVirtualizer';\n", 1),
+    ("          overflowX: 'auto',\n          scrollBehavior: 'auto',\n        }}\n        onScroll={handleScroll}\n",
+     "          overflowX: 'auto',\n          scrollBehavior: 'auto',\n"
+     "          ...(isDocumentBlock\n            ? { marginLeft: -CAREHUB_GRID_GUTTER, width: `calc(100% + ${CAREHUB_GRID_GUTTER}px)` }\n            : {}),\n"
+     "        }}\n        onScroll={handleScroll}\n", 1),
+]
+EDITS["src/components/database/components/grid/grid-row/GridVirtualRow.tsx"] += [
+    ("import { useReadOnly, useRowData, useSortsSelector } from '@/application/database-yjs';\n",
+     "import { useDatabaseContext, useReadOnly, useRowData, useSortsSelector } from '@/application/database-yjs';\n", 1),
+    ("  const isRegularRow = rowType === RenderRowType.Row;\n",
+     "  const isRegularRow = rowType === RenderRowType.Row;\n"
+     "  // CareHub: inside a page the row-button margin stays put while scrolling sideways.\n"
+     "  const carehubInPage = Boolean(useDatabaseContext().isDocumentBlock);\n", 1),
+    ("        <div style={{ width: `${before}px` }}>\n",
+     "        <div\n          style={{\n            width: `${before}px`,\n"
+     "            ...(carehubInPage && before > 0\n"
+     "              ? { position: 'sticky' as const, left: 0, zIndex: 12, flexShrink: 0, background: 'var(--background-primary)' }\n"
+     "              : {}),\n          }}\n        >\n", 1),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
+
