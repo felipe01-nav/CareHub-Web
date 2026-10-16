@@ -1713,7 +1713,13 @@ function ICloudSection({
   const [error, setError] = useState('');
   const [confirmOff, setConfirmOff] = useState(false);
 
-  if (!status.enabled) return null;
+  if (!status.enabled) {
+    return (
+      <div className='mt-1 px-2 py-1.5 text-xs text-text-tertiary' data-testid='carehub-icloud-off'>
+        iCloud calendars aren&apos;t switched on for this Care Hub yet. Ask your admin to turn them on.
+      </div>
+    );
+  }
 
   const connect = async () => {
     setBusy(true);
