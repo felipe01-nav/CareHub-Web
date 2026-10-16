@@ -267,3 +267,14 @@ body {
   width: 100% !important;
   max-width: 100% !important;
 }
+
+/* CareHub: frozen table columns stay on the left while scrolling sideways. */
+.carehub-frozen-cell {
+  background-color: var(--background-primary) !important;
+}
+.carehub-frozen-cell[data-hover-row] {
+  background-image: linear-gradient(var(--fill-content-hover), var(--fill-content-hover));
+}
+.carehub-frozen-last {
+  box-shadow: 1px 0 0 var(--border-primary), 6px 0 8px -6px rgba(0, 0, 0, 0.18);
+}
