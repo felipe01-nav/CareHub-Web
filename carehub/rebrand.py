@@ -123,6 +123,53 @@ EDITS.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# CareHub: refresh the sidebar right after a page or space changes.
+# This server doesn't push "folder changed" messages to the browser, so
+# renames, new icons, moves etc. used to show up only after a minute or so.
+# After any successful change the app now reloads the sidebar itself.
+# ---------------------------------------------------------------------------
+FOLDER_NOTIFY = """let axiosInstance: AxiosInstance | null = null;
+
+// CareHub: tell the sidebar to reload after a page/space change.
+const CAREHUB_FOLDER_CHANGE =
+  /\\/api\\/workspace\\/[^/]+\\/(page-view|space|spaces|trash|delete-all-pages-from-trash|restore-all-pages-from-trash)(\\/|$|\\?)/;
+const CAREHUB_NOT_FOLDER = /\\/(page-mention|permission|members|group|add-recent-pages|favorite)(\\/|$|\\?)/;
+let carehubFolderTimers: ReturnType<typeof setTimeout>[] = [];
+
+function carehubNotifyFolderChange(config: { method?: string; url?: string } | undefined) {
+  const method = config?.method?.toLowerCase();
+  const url = config?.url ?? '';
+
+  if (!method || method === 'get' || typeof window === 'undefined') return;
+  if (!CAREHUB_FOLDER_CHANGE.test(url) || CAREHUB_NOT_FOLDER.test(url)) return;
+  carehubFolderTimers.forEach(clearTimeout);
+  // Reload twice: right away, and once more in case the server was still saving.
+  carehubFolderTimers = [300, 2000].map((ms) =>
+    setTimeout(() => window.dispatchEvent(new Event('carehub-folder-changed')), ms)
+  );
+}
+"""
+
+EDITS.update({
+    "src/application/services/js-services/http/core.ts": [
+        ("let axiosInstance: AxiosInstance | null = null;\n", FOLDER_NOTIFY, 1),
+        ("  axiosInstance.interceptors.response.use((response) => response, handleUnauthorized);\n",
+         "  axiosInstance.interceptors.response.use((response) => {\n    carehubNotifyFolderChange(response.config);\n    return response;\n  }, handleUnauthorized);\n", 1),
+    ],
+    "src/components/app/hooks/useWorkspaceData.ts": [
+        ("      eventEmitter.on(APP_EVENTS.FOLDER_OUTLINE_CHANGED, handleFolderOutlineChanged);\n    }\n",
+         "      eventEmitter.on(APP_EVENTS.FOLDER_OUTLINE_CHANGED, handleFolderOutlineChanged);\n    }\n\n"
+         "    // CareHub: reload the sidebar after a local page/space change.\n"
+         "    const handleCareHubFolderChanged = () => handleFolderOutlineChanged({} as notification.IFolderChanged);\n\n"
+         "    window.addEventListener('carehub-folder-changed', handleCareHubFolderChanged);\n", 1),
+        ("        eventEmitter.off(APP_EVENTS.FOLDER_OUTLINE_CHANGED, handleFolderOutlineChanged);\n      }\n",
+         "        eventEmitter.off(APP_EVENTS.FOLDER_OUTLINE_CHANGED, handleFolderOutlineChanged);\n      }\n\n"
+         "      window.removeEventListener('carehub-folder-changed', handleCareHubFolderChanged);\n", 1),
+    ],
+})
+
+
 def main() -> int:
     failed = False
     for name, edits in EDITS.items():
