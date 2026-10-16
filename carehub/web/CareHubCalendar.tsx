@@ -328,6 +328,22 @@ function useLocalState<T>(key: string, initial: T): [T, (v: T) => void] {
   return [value, update];
 }
 
+export function useNarrow(limit = 768) {
+  const get = () => (typeof window === 'undefined' ? false : window.innerWidth < limit);
+  const [narrow, setNarrow] = useState(get);
+
+  useEffect(() => {
+    const onResize = () => setNarrow(get());
+
+    window.addEventListener('resize', onResize);
+
+    return () => window.removeEventListener('resize', onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
+
+  return narrow;
+}
+
 function CalendarIcon({ className }: { className?: string }) {
   return (
     <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='1.6'
@@ -382,6 +398,145 @@ export function CareHubCalendarNavItem() {
       Calendar
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// upcoming events (used by the sidebar "Upcoming events" list)
+// ---------------------------------------------------------------------------
+
+function readLocal<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const feedCache: Record<string, { at: number; events: IcsEvent[] }> = {};
+
+/** Events from now until `days` days ahead, from all visible calendars. */
+export async function loadUpcomingEvents(days = 7, limit = 6): Promise<CalEvent[]> {
+  const now = Date.now();
+  const from = startOfDay(now);
+  const to = addDays(from, days + 1);
+  const hidden = readLocal<string[]>('carehub-calendar-hidden', []);
+  const ownColor = readLocal<string>('carehub-calendar-own-color', COLORS[0]);
+  const out: CalEvent[] = [];
+
+  const own = async () => {
+    if (hidden.includes(OWN_ID)) return;
+    const res = await call<{ events: ServerEvent[] }>('get', `${API}/events?from=${from}&to=${to}`);
+
+    for (const e of res?.events ?? []) {
+      out.push({
+        key: `own:${e.id}`,
+        id: e.id,
+        calendarId: OWN_ID,
+        calendarName: 'My events',
+        color: e.color || ownColor,
+        title: e.title || '(No title)',
+        start: e.start,
+        end: e.end,
+        allDay: e.all_day,
+        location: e.location || '',
+        notes: e.notes || '',
+        url: '',
+        readOnly: false,
+      });
+    }
+  };
+
+  const feeds = async () => {
+    const res = await call<{ feeds: Feed[] }>('get', `${API}/feeds`);
+
+    await Promise.all(
+      (res?.feeds ?? [])
+        .filter((f) => !hidden.includes(f.id))
+        .map(async (feed) => {
+          let cached = feedCache[feed.id];
+
+          if (!cached || now - cached.at > FEED_REFRESH_MS) {
+            const ics = await call<{ ics: string }>('get', `${API}/feeds/${feed.id}/ics`);
+
+            cached = { at: now, events: parseIcs(ics?.ics ?? '') };
+            feedCache[feed.id] = cached;
+          }
+
+          for (const o of expandIcs(cached.events, from, to, feed.id)) {
+            out.push({
+              key: o.key,
+              calendarId: feed.id,
+              calendarName: feed.name,
+              color: feed.color || COLORS[1],
+              title: o.title || '(No title)',
+              start: o.start,
+              end: o.end,
+              allDay: o.allDay,
+              location: o.location,
+              notes: o.description,
+              url: o.url,
+              readOnly: true,
+            });
+          }
+        })
+    );
+  };
+
+  const icloud = async () => {
+    const status = await call<ICloudStatus>('get', `${API}/icloud`);
+
+    if (!status?.connected) return;
+    const res = await call<{ events: Array<{ calendar: string; href: string; etag: string; ics: string }> }>(
+      'get',
+      `${API}/icloud/events?from=${from}&to=${to}`
+    );
+
+    for (const item of res?.events ?? []) {
+      const calendarId = ICLOUD_PREFIX + item.calendar;
+
+      if (hidden.includes(calendarId)) continue;
+      const cal = (status.calendars ?? []).find((c) => c.url === item.calendar);
+
+      if (!cal) continue;
+      for (const o of expandIcs(parseIcs(item.ics), from, to, `ic:${item.href}`)) {
+        out.push({
+          key: o.key,
+          calendarId,
+          calendarName: `${cal.name} (iCloud)`,
+          color: cal.color || COLORS[2],
+          title: o.title || '(No title)',
+          start: o.start,
+          end: o.end,
+          allDay: o.allDay,
+          location: o.location,
+          notes: o.description,
+          url: o.url,
+          readOnly: true,
+        });
+      }
+    }
+  };
+
+  await Promise.allSettled([own(), feeds(), icloud()]);
+
+  return out
+    .filter((e) => (e.allDay ? e.end > from : Math.max(e.end, e.start + 1) > now))
+    .sort((a, b) => a.start - b.start || Number(b.allDay) - Number(a.allDay))
+    .slice(0, limit);
+}
+
+/** Short time text for the sidebar, e.g. "3:30 – 4 PM" today or "Mon 8:00 AM". */
+export function upcomingTimeText(e: CalEvent, now = Date.now()) {
+  const today = startOfDay(now);
+  const day = startOfDay(e.start);
+  const dayText = day === today ? '' : day === addDays(today, 1) ? 'Tomorrow' : fmtWeekday(e.start);
+
+  if (e.allDay) return dayText || 'Today';
+  if (dayText) return `${dayText} ${fmtTime(e.start)}`;
+
+  return `${fmtTime(e.start)} – ${fmtTime(e.end)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -453,8 +608,17 @@ function placeDay(events: CalEvent[], dayStart: number): Placed[] {
 // ---------------------------------------------------------------------------
 
 export default function CareHubCalendarPage() {
-  const [view, setView] = useLocalState<ViewMode>('carehub-calendar-view', 'week');
-  const [cursor, setCursor] = useState(() => startOfDay(Date.now()));
+  const narrow = useNarrow();
+  const [wideView, setWideView] = useLocalState<ViewMode>('carehub-calendar-view', 'week');
+  const [phoneView, setPhoneView] = useLocalState<ViewMode>('carehub-calendar-view-phone', 'day');
+  const view = narrow ? phoneView : wideView;
+  const setView = narrow ? setPhoneView : setWideView;
+  const [sideOpen, setSideOpen] = useState(false);
+  const [cursor, setCursor] = useState(() => {
+    const asked = Number(new URLSearchParams(window.location.search).get('date'));
+
+    return startOfDay(asked > 0 ? asked : Date.now());
+  });
   const [now, setNow] = useState(() => Date.now());
   const [ownEvents, setOwnEvents] = useState<CalEvent[]>([]);
   const [ownColor, setOwnColor] = useLocalState<string>('carehub-calendar-own-color', COLORS[0]);
@@ -1117,14 +1281,25 @@ export default function CareHubCalendarPage() {
       className='carehub-calendar flex w-full min-w-0 flex-1 overflow-hidden bg-background-primary text-text-primary'
       data-testid='carehub-calendar'
     >
+      {(!narrow || sideOpen) && (
+      <div
+        className={narrow ? 'fixed inset-0 z-[1200] flex bg-black/30' : 'contents'}
+        onMouseDown={(e) => {
+          if (narrow && e.target === e.currentTarget) setSideOpen(false);
+        }}
+      >
       <CalendarSidebar
         cursor={cursor}
         view={view}
         days={days}
-        onPickDay={(d) => setCursor(d)}
+        onPickDay={(d) => {
+          setCursor(d);
+          setSideOpen(false);
+        }}
         onCreate={() => {
           const start = atMinutes(startOfDay(Date.now()), (new Date().getHours() + 1) * 60);
 
+          setSideOpen(false);
           openNew(start, start + 60 * 60000);
         }}
         nextUp={nextUp}
@@ -1146,9 +1321,19 @@ export default function CareHubCalendarPage() {
           if (!next.connected && defaultTarget.startsWith(ICLOUD_PREFIX)) setDefaultTarget(OWN_ID);
         }}
       />
+      </div>
+      )}
 
       <div className='flex min-w-0 flex-1 flex-col'>
-        <div className='flex h-12 shrink-0 items-center gap-1 border-b border-border-primary px-4'>
+        <div className={cn('flex h-12 shrink-0 items-center gap-1 border-b border-border-primary', narrow ? 'px-2' : 'px-4')}>
+          {narrow && (
+            <IconButton label='Calendars' onClick={() => setSideOpen(true)}>
+              <svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2'
+                strokeLinecap='round' aria-hidden='true'>
+                <path d='M4 6h16M4 12h16M4 18h16' />
+              </svg>
+            </IconButton>
+          )}
           <Button variant='outline' size='sm' onClick={today}>
             Today
           </Button>
@@ -1158,16 +1343,18 @@ export default function CareHubCalendarPage() {
           <IconButton label='Next' onClick={() => go(1)}>
             <Chevron dir='right' />
           </IconButton>
-          <div className='ml-2 truncate text-lg font-semibold' data-testid='carehub-calendar-title'>
-            {rangeTitle(view, cursor)}
+          <div className={cn('ml-2 truncate font-semibold', narrow ? 'text-sm' : 'text-lg')} data-testid='carehub-calendar-title'>
+            {narrow && view === 'day'
+              ? new Date(cursor).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+              : rangeTitle(view, cursor)}
           </div>
           <div className='flex-1' />
-          <IconButton label='Refresh' onClick={() => setReloadTick((n) => n + 1)}>
+          {!narrow && <IconButton label='Refresh' onClick={() => setReloadTick((n) => n + 1)}>
             <svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2'
               strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
               <path d='M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7' />
             </svg>
-          </IconButton>
+          </IconButton>}
           <div className='ml-1 flex rounded-[8px] border border-border-primary p-0.5' role='tablist'>
             {(['day', 'week', 'month'] as ViewMode[]).map((v) => (
               <button
@@ -1176,12 +1363,14 @@ export default function CareHubCalendarPage() {
                 role='tab'
                 aria-selected={view === v}
                 onClick={() => setView(v)}
+                aria-label={v}
                 className={cn(
-                  'rounded-[6px] px-3 py-1 text-sm capitalize',
+                  'rounded-[6px] py-1 text-sm capitalize',
+                  narrow ? 'px-2' : 'px-3',
                   view === v ? 'bg-fill-content-hover font-medium text-text-primary' : 'text-text-secondary hover:text-text-primary'
                 )}
               >
-                {v}
+                {narrow ? v.charAt(0).toUpperCase() : v}
               </button>
             ))}
           </div>
@@ -1227,6 +1416,11 @@ export default function CareHubCalendarPage() {
           </div>
           {selected && (
             <EventPanel
+              className={
+                narrow
+                  ? 'fixed inset-x-0 bottom-0 z-[1200] max-h-[70vh] w-full rounded-t-[12px] border-l-0 border-t bg-background-primary shadow-xl'
+                  : undefined
+              }
               event={selected}
               onClose={() => setSelected(null)}
               onEdit={() => openEdit(selected)}
@@ -1237,6 +1431,23 @@ export default function CareHubCalendarPage() {
           )}
         </div>
       </div>
+
+      {narrow && !editor && !selected && (
+        <button
+          type='button'
+          aria-label='New event'
+          data-testid='carehub-calendar-fab'
+          onClick={() => {
+            const start = atMinutes(startOfDay(cursor), (new Date().getHours() + 1) * 60);
+
+            openNew(start, start + 60 * 60000);
+          }}
+          className='fixed bottom-6 right-5 z-[1100] flex h-12 w-12 items-center justify-center rounded-full bg-fill-theme-thick text-2xl leading-none text-white shadow-lg'
+          style={{ background: 'var(--carehub-fab, #171717)' }}
+        >
+          +
+        </button>
+      )}
 
       {editor && (
         <EventEditor
@@ -2027,7 +2238,9 @@ function EventPanel({
   onClose,
   onEdit,
   onDelete,
+  className,
 }: {
+  className?: string;
   event: CalEvent;
   onClose: () => void;
   onEdit: () => void;
@@ -2044,7 +2257,7 @@ function EventPanel({
 
   return (
     <div
-      className='flex w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border-primary p-4'
+      className={cn('flex w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border-primary p-4', className)}
       data-testid='carehub-calendar-panel'
     >
       <div className='flex items-start gap-2'>
