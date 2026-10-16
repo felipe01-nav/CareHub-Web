@@ -737,5 +737,36 @@ EDITS["src/components/app/outline/Outline.tsx"] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# "@" mentions: people, pages and dates are searched in the browser (this
+# server has no mention-search service). Mention notifications are optional,
+# so a failure there no longer interrupts typing.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "carehub-mentions.ts"] = "src/application/services/js-services/http/carehub-mentions.ts"
+
+EDITS["src/application/services/js-services/http/workspace-api.ts"] = [
+    ("import { APIResponse, executeAPIRequest, executeAPIVoidRequest, getAxios } from './core';\n",
+     "import { APIResponse, executeAPIRequest, executeAPIVoidRequest, getAxios } from './core';\n"
+     "import { carehubSearchMentions } from './carehub-mentions';\n", 1),
+    ("  const url = `/api/workspace/${workspaceId}/mentions/search`;\n\n"
+     "  return executeAPIRequest<MentionSearchResponse>(() =>\n"
+     "    getAxios()?.post<APIResponse<MentionSearchResponse>>(url, payload)\n"
+     "  );\n",
+     "  return carehubSearchMentions(workspaceId, payload);\n", 1),
+    ("  const url = `/api/workspace/${workspaceId}/page-view/${viewId}/page-mention`;\n\n"
+     "  return executeAPIVoidRequest(() =>\n"
+     "    getAxios()?.put<APIResponse>(url, data)\n"
+     "  );\n",
+     "  const url = `/api/workspace/${workspaceId}/page-view/${viewId}/page-mention`;\n\n"
+     "  try {\n"
+     "    await executeAPIVoidRequest(() =>\n"
+     "      getAxios()?.put<APIResponse>(url, data)\n"
+     "    );\n"
+     "  } catch (err) {\n"
+     "    console.warn('[CareHub] mention notification skipped', err);\n"
+     "  }\n", 1),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
