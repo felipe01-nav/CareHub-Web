@@ -58,7 +58,40 @@ export interface CalEvent {
   notes: string;
   url: string;
   readOnly: boolean;
+  /** Set for events from a connected iCloud calendar that can be changed here. */
+  icloud?: ICloudRef;
 }
+
+interface ICloudRef {
+  href: string;
+  etag: string;
+  uid: string;
+  calendar: string;
+}
+
+interface ICloudCalendar {
+  url: string;
+  name: string;
+  color: string;
+  read_only: boolean;
+}
+
+interface ICloudStatus {
+  enabled: boolean;
+  connected: boolean;
+  apple_id?: string;
+  calendars?: ICloudCalendar[];
+  error?: string;
+}
+
+interface ICloudItem {
+  calendar: string;
+  href: string;
+  etag: string;
+  events: IcsEvent[];
+}
+
+const ICLOUD_PREFIX = 'icloud:';
 
 interface FeedState {
   events: IcsEvent[];
@@ -78,6 +111,9 @@ interface EditorState {
   location: string;
   notes: string;
   color: string;
+  /** Which calendar a new event goes on: 'own' or 'icloud:<url>'. */
+  target?: string;
+  icloud?: ICloudRef;
 }
 
 type DragState = {
@@ -430,6 +466,10 @@ export default function CareHubCalendarPage() {
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [icloud, setIcloud] = useState<ICloudStatus>({ enabled: false, connected: false });
+  const [icloudItems, setIcloudItems] = useState<ICloudItem[]>([]);
+  const [icloudMoves, setIcloudMoves] = useState<Record<string, { start: number; end: number }>>({});
+  const [defaultTarget, setDefaultTarget] = useLocalState<string>('carehub-calendar-default-target', OWN_ID);
   const dragRef = useRef<DragState | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -545,6 +585,100 @@ export default function CareHubCalendarPage() {
     return () => window.clearInterval(timer);
   }, [feeds, loadFeed, reloadTick]);
 
+  // ---- private iCloud calendars ----
+  const loadIcloudStatus = useCallback(async () => {
+    try {
+      const res = await call<ICloudStatus>('get', `${API}/icloud`);
+
+      setIcloud(res ?? { enabled: false, connected: false });
+    } catch {
+      setIcloud({ enabled: false, connected: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadIcloudStatus();
+  }, [loadIcloudStatus]);
+
+  const loadIcloud = useCallback(async () => {
+    if (!icloud.connected) {
+      setIcloudItems([]);
+      return;
+    }
+
+    const from = Math.min(rangeStart, startOfDay(Date.now())) - DAY;
+    const to = Math.max(rangeEnd, Date.now() + 2 * DAY) + DAY;
+
+    try {
+      const res = await call<{ events: Array<{ calendar: string; href: string; etag: string; ics: string }> }>(
+        'get',
+        `${API}/icloud/events?from=${from}&to=${to}`
+      );
+
+      setIcloudItems(
+        (res?.events ?? []).map((item) => ({
+          calendar: item.calendar,
+          href: item.href,
+          etag: item.etag,
+          events: parseIcs(item.ics),
+        }))
+      );
+      setIcloudMoves({});
+    } catch (err) {
+      setError(`Could not load iCloud: ${errorText(err)}`);
+    }
+  }, [icloud.connected, rangeStart, rangeEnd]);
+
+  useEffect(() => {
+    void loadIcloud();
+    if (!icloud.connected) return;
+    const timer = window.setInterval(() => void loadIcloud(), 5 * 60000);
+
+    return () => window.clearInterval(timer);
+  }, [loadIcloud, reloadTick, icloud.connected]);
+
+  const icloudEvents = useCallback(
+    (from: number, to: number) => {
+      const out: CalEvent[] = [];
+      const calendars = icloud.calendars ?? [];
+
+      for (const item of icloudItems) {
+        const calendarId = ICLOUD_PREFIX + item.calendar;
+
+        if (hidden.includes(calendarId)) continue;
+        const cal = calendars.find((c) => c.url === item.calendar);
+
+        if (!cal) continue;
+        // Repeating events are shown but changed in the Calendar app.
+        const repeating = item.events.length > 1 || item.events.some((e) => e.rrule);
+        const moved = icloudMoves[item.href];
+
+        for (const o of expandIcs(item.events, from, to, `ic:${item.href}`)) {
+          const editable = !cal.read_only && !repeating && Boolean(o.uid);
+
+          out.push({
+            key: o.key,
+            calendarId,
+            calendarName: `${cal.name} (iCloud)`,
+            color: cal.color || COLORS[2],
+            title: o.title || '(No title)',
+            start: moved ? moved.start : o.start,
+            end: moved ? moved.end : o.end,
+            allDay: o.allDay,
+            location: o.location,
+            notes: o.description,
+            url: o.url,
+            readOnly: !editable,
+            icloud: editable ? { href: item.href, etag: item.etag, uid: o.uid, calendar: item.calendar } : undefined,
+          });
+        }
+      }
+
+      return out;
+    },
+    [hidden, icloud.calendars, icloudItems, icloudMoves]
+  );
+
   // ---- all events in view ----
   const feedEvents = useCallback(
     (from: number, to: number) => {
@@ -585,18 +719,20 @@ export default function CareHubCalendarPage() {
           .filter((e) => e.start < rangeEnd && Math.max(e.end, e.start + 1) > rangeStart)
           .map((e) => ({ ...e, color: e.color || ownColor }));
 
-    return [...own, ...feedEvents(rangeStart, rangeEnd)].sort((a, b) => a.start - b.start);
-  }, [feedEvents, hidden, ownColor, ownEvents, rangeEnd, rangeStart]);
+    return [...own, ...feedEvents(rangeStart, rangeEnd), ...icloudEvents(rangeStart, rangeEnd)].sort(
+      (a, b) => a.start - b.start
+    );
+  }, [feedEvents, icloudEvents, hidden, ownColor, ownEvents, rangeEnd, rangeStart]);
 
   const nextUp = useMemo(() => {
     const until = now + DAY;
     const own = hidden.includes(OWN_ID) ? [] : ownEvents.map((e) => ({ ...e, color: e.color || ownColor }));
-    const all = [...own, ...feedEvents(now - DAY, until)]
+    const all = [...own, ...feedEvents(now - DAY, until), ...icloudEvents(now - DAY, until)]
       .filter((e) => !e.allDay && e.end > now && e.start < until)
       .sort((a, b) => a.start - b.start);
 
     return all[0] ?? null;
-  }, [feedEvents, hidden, now, ownColor, ownEvents]);
+  }, [feedEvents, icloudEvents, hidden, now, ownColor, ownEvents]);
 
   // keep the side panel in sync with fresh data
   useEffect(() => {
@@ -647,15 +783,18 @@ export default function CareHubCalendarPage() {
         location: '',
         notes: '',
         color: '',
+        target: defaultTarget,
       });
     },
-    []
+    [defaultTarget]
   );
 
   const openEdit = useCallback((e: CalEvent) => {
-    if (e.readOnly || !e.id) return;
+    if (e.readOnly || (!e.id && !e.icloud)) return;
     setEditor({
       id: e.id,
+      icloud: e.icloud,
+      target: e.icloud ? ICLOUD_PREFIX + e.icloud.calendar : OWN_ID,
       title: e.title === '(No title)' ? '' : e.title,
       startDate: toDateInput(e.start),
       startTime: toTimeInput(e.start),
@@ -693,24 +832,87 @@ export default function CareHubCalendarPage() {
         color: state.color,
       };
 
+      const target = state.icloud ? ICLOUD_PREFIX + state.icloud.calendar : state.target || OWN_ID;
+
+      if (target.startsWith(ICLOUD_PREFIX)) {
+        const icloudBody = {
+          ...body,
+          start_day: state.allDay ? toDateInput(start).replace(/-/g, '') : '',
+          end_day: state.allDay ? toDateInput(end).replace(/-/g, '') : '',
+        };
+
+        if (state.icloud) {
+          await call('put', `${API}/icloud/events`, {
+            ...icloudBody,
+            href: state.icloud.href,
+            etag: state.icloud.etag,
+            uid: state.icloud.uid,
+          });
+        } else {
+          await call('post', `${API}/icloud/events`, { ...icloudBody, calendar: target.slice(ICLOUD_PREFIX.length) });
+        }
+
+        if (!state.icloud) setDefaultTarget(target);
+        await loadIcloud();
+        return;
+      }
+
       if (state.id) await call('put', `${API}/events/${state.id}`, body);
-      else await call('post', `${API}/events`, body);
+      else {
+        await call('post', `${API}/events`, body);
+        setDefaultTarget(OWN_ID);
+      }
+
       await loadOwn();
     },
-    [loadOwn]
+    [loadIcloud, loadOwn, setDefaultTarget]
   );
 
   const deleteEvent = useCallback(
-    async (id: string) => {
-      await call('delete', `${API}/events/${id}`);
+    async (e: { id?: string; icloud?: ICloudRef }) => {
+      if (e.icloud) {
+        await call('post', `${API}/icloud/events/delete`, { href: e.icloud.href, etag: e.icloud.etag });
+        setSelected(null);
+        await loadIcloud();
+        return;
+      }
+
+      if (!e.id) return;
+      await call('delete', `${API}/events/${e.id}`);
       setSelected(null);
       await loadOwn();
     },
-    [loadOwn]
+    [loadIcloud, loadOwn]
   );
 
   const moveEvent = useCallback(
     async (e: CalEvent, start: number, end: number) => {
+      if (e.icloud) {
+        const ref = e.icloud;
+
+        setIcloudMoves((prev) => ({ ...prev, [ref.href]: { start, end } }));
+        try {
+          await call('put', `${API}/icloud/events`, {
+            href: ref.href,
+            etag: ref.etag,
+            uid: ref.uid,
+            title: e.title === '(No title)' ? '' : e.title,
+            start,
+            end,
+            all_day: e.allDay,
+            start_day: e.allDay ? toDateInput(start).replace(/-/g, '') : '',
+            end_day: e.allDay ? toDateInput(end).replace(/-/g, '') : '',
+            location: e.location,
+            notes: e.notes,
+          });
+        } catch (err) {
+          setError(`Could not move the event: ${errorText(err)}`);
+        }
+
+        await loadIcloud();
+        return;
+      }
+
       if (!e.id) return;
       setOwnEvents((prev) => prev.map((o) => (o.id === e.id ? { ...o, start, end } : o)));
       try {
@@ -729,7 +931,7 @@ export default function CareHubCalendarPage() {
 
       await loadOwn();
     },
-    [loadOwn, ownEvents]
+    [loadIcloud, loadOwn, ownEvents]
   );
 
   // ---- keyboard ----
@@ -937,6 +1139,12 @@ export default function CareHubCalendarPage() {
         onFeedsChanged={async () => {
           await loadFeeds();
         }}
+        icloud={icloud}
+        onIcloudChanged={(next) => {
+          setIcloud(next);
+          if (!next.connected) setIcloudItems([]);
+          if (!next.connected && defaultTarget.startsWith(ICLOUD_PREFIX)) setDefaultTarget(OWN_ID);
+        }}
       />
 
       <div className='flex min-w-0 flex-1 flex-col'>
@@ -1023,7 +1231,7 @@ export default function CareHubCalendarPage() {
               onClose={() => setSelected(null)}
               onEdit={() => openEdit(selected)}
               onDelete={async () => {
-                if (selected.id) await deleteEvent(selected.id);
+                await deleteEvent(selected);
               }}
             />
           )}
@@ -1034,15 +1242,21 @@ export default function CareHubCalendarPage() {
         <EventEditor
           initial={editor}
           defaultColor={ownColor}
+          targets={[
+            { id: OWN_ID, name: 'My events (Care Hub)', color: ownColor },
+            ...(icloud.calendars ?? [])
+              .filter((c) => !c.read_only)
+              .map((c) => ({ id: ICLOUD_PREFIX + c.url, name: `${c.name} (iCloud)`, color: c.color || COLORS[2] })),
+          ]}
           onClose={() => setEditor(null)}
           onSave={async (state) => {
             await saveEvent(state);
             setEditor(null);
           }}
           onDelete={
-            editor.id
+            editor.id || editor.icloud
               ? async () => {
-                  await deleteEvent(editor.id as string);
+                  await deleteEvent({ id: editor.id, icloud: editor.icloud });
                   setEditor(null);
                 }
               : undefined
@@ -1073,6 +1287,8 @@ function CalendarSidebar(props: {
   ownColor: string;
   onOwnColor: (c: string) => void;
   onFeedsChanged: () => Promise<void>;
+  icloud: ICloudStatus;
+  onIcloudChanged: (next: ICloudStatus) => void;
 }) {
   const { cursor, view, days, onPickDay, onCreate, nextUp, now, onOpenEvent, feeds, feedData, hidden, onToggle } = props;
   const [miniMonth, setMiniMonth] = useState(() => startOfMonth(cursor));
@@ -1244,6 +1460,7 @@ function CalendarSidebar(props: {
           );
         })}
         {removeError && <div className='px-1 pt-1 text-xs text-text-secondary'>{removeError}</div>}
+        <ICloudSection status={props.icloud} hidden={hidden} onToggle={onToggle} onChanged={props.onIcloudChanged} />
         {adding ? (
           <AddCalendarForm
             onCancel={() => setAdding(false)}
@@ -1264,6 +1481,144 @@ function CalendarSidebar(props: {
         )}
       </div>
     </div>
+  );
+}
+
+function ICloudSection({
+  status,
+  hidden,
+  onToggle,
+  onChanged,
+}: {
+  status: ICloudStatus;
+  hidden: string[];
+  onToggle: (id: string) => void;
+  onChanged: (next: ICloudStatus) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [appleId, setAppleId] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmOff, setConfirmOff] = useState(false);
+
+  if (!status.enabled) return null;
+
+  const connect = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await call<ICloudStatus>('post', `${API}/icloud`, { apple_id: appleId.trim(), password });
+
+      setPassword('');
+      setOpen(false);
+      onChanged(res ?? { enabled: true, connected: true });
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy(true);
+    try {
+      await call('delete', `${API}/icloud`);
+      setConfirmOff(false);
+      onChanged({ enabled: true, connected: false });
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (status.connected) {
+    return (
+      <div className='mt-2' data-testid='carehub-icloud'>
+        {(status.calendars ?? []).map((c) => (
+          <CalendarRow
+            key={c.url}
+            name={c.name}
+            color={c.color || COLORS[2]}
+            visible={!hidden.includes(ICLOUD_PREFIX + c.url)}
+            onToggle={() => onToggle(ICLOUD_PREFIX + c.url)}
+            note={c.read_only ? 'iCloud · read-only' : 'iCloud · private'}
+          />
+        ))}
+        {status.error && <div className='px-1 pt-1 text-xs text-text-secondary'>iCloud: {status.error}</div>}
+        <div className='flex items-center gap-2 px-1 pt-1 text-[11px] text-text-tertiary'>
+          <span className='min-w-0 flex-1 truncate'>{status.apple_id}</span>
+          {confirmOff ? (
+            <>
+              <button type='button' className='font-medium text-text-primary underline' disabled={busy} onClick={() => void disconnect()}>
+                Disconnect
+              </button>
+              <button type='button' onClick={() => setConfirmOff(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button type='button' className='hover:text-text-primary' onClick={() => setConfirmOff(true)}>
+              Disconnect iCloud
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        type='button'
+        onClick={() => setOpen(true)}
+        className='mt-1 w-full rounded-[8px] px-2 py-1.5 text-left text-sm text-text-secondary hover:bg-fill-content-hover hover:text-text-primary'
+        data-testid='carehub-icloud-connect'
+      >
+        + Connect iCloud (private)
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className='mt-2 flex flex-col gap-2 rounded-[8px] border border-border-primary p-3'
+      onSubmit={(e) => {
+        e.preventDefault();
+        void connect();
+      }}
+    >
+      <div className='text-sm font-medium'>Connect iCloud</div>
+      <ol className='list-decimal pl-4 text-xs leading-relaxed text-text-secondary'>
+        <li>
+          Go to{' '}
+          <a className='underline' href='https://account.apple.com' target='_blank' rel='noopener noreferrer'>
+            account.apple.com
+          </a>{' '}
+          and sign in.
+        </li>
+        <li>Sign-In and Security → App-Specific Passwords → add one called “Care Hub”.</li>
+        <li>Paste it below. It only works for calendars and contacts, and you can delete it at Apple any time.</li>
+      </ol>
+      <Input type='email' placeholder='Apple ID email' value={appleId} onChange={(e) => setAppleId(e.target.value)} />
+      <Input
+        type='password'
+        placeholder='App-specific password (xxxx-xxxx-xxxx-xxxx)'
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        autoComplete='off'
+      />
+      {error && <div className='text-xs text-text-error'>{error}</div>}
+      <div className='flex justify-end gap-2'>
+        <Button type='button' size='sm' variant='ghost' onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <Button type='submit' size='sm' disabled={busy || !appleId.includes('@') || password.length < 8}>
+          {busy ? 'Connecting…' : 'Connect'}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -1498,7 +1853,7 @@ function TimeGrid(props: {
               >
                 {placedByDay[i].map((p) => {
                   const e = p.event;
-                  const editable = !e.readOnly && Boolean(e.id);
+                  const editable = !e.readOnly && (Boolean(e.id) || Boolean(e.icloud));
 
                   return (
                     <div
@@ -1763,12 +2118,14 @@ function EventPanel({
 function EventEditor({
   initial,
   defaultColor,
+  targets,
   onClose,
   onSave,
   onDelete,
 }: {
   initial: EditorState;
   defaultColor: string;
+  targets: Array<{ id: string; name: string; color: string }>;
   onClose: () => void;
   onSave: (s: EditorState) => Promise<void>;
   onDelete?: () => Promise<void>;
@@ -1818,8 +2175,25 @@ function EventEditor({
         }}
         data-testid='carehub-calendar-editor'
       >
-        <div className='text-base font-semibold'>{state.id ? 'Edit event' : 'New event'}</div>
+        <div className='text-base font-semibold'>{state.id || state.icloud ? 'Edit event' : 'New event'}</div>
         <Input autoFocus placeholder='Title' value={state.title} onChange={(e) => set({ title: e.target.value })} />
+        {!state.id && !state.icloud && targets.length > 1 && (
+          <label className='flex flex-col gap-1'>
+            <span className={labelCls}>Calendar</span>
+            <select
+              className={fieldCls}
+              value={targets.some((t) => t.id === state.target) ? state.target : OWN_ID}
+              onChange={(e) => set({ target: e.target.value })}
+              data-testid='carehub-calendar-target'
+            >
+              {targets.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className='flex cursor-pointer items-center gap-2 text-sm'>
           <input type='checkbox' className='h-4 w-4' checked={state.allDay} onChange={(e) => set({ allDay: e.target.checked })} />
           All day
@@ -1862,7 +2236,7 @@ function EventEditor({
             onChange={(e) => set({ notes: e.target.value })}
           />
         </div>
-        <div className='flex items-center gap-2'>
+        <div className={cn('flex items-center gap-2', (state.icloud || (state.target || OWN_ID).startsWith(ICLOUD_PREFIX)) && 'hidden')}>
           <span className={labelCls}>Colour</span>
           {COLORS.map((c) => (
             <button
