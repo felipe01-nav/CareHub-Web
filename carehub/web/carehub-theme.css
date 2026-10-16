@@ -246,3 +246,16 @@ body {
   --input: 0, 0%, 98%, 0.08;
   --ring: 0 0% 83.1%;
 }
+
+/* CareHub: tab content lines up with the tab bar (no nested-block indent). */
+.block-element[data-block-type="carehub_tabs"] .block-element[data-block-type="carehub_tab"] {
+  margin-left: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.block-element[data-block-type="carehub_tab"] > .block-element,
+.block-element[data-block-type="carehub_tab"] > div > .block-element {
+  margin-left: 0 !important;
+}
+
