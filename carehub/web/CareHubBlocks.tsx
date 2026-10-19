@@ -58,7 +58,11 @@ function selectFirstText(editor: YjsEditor, blockId: string) {
 }
 
 // Insert a layout block where the slash command was typed (same rules as the table command).
-function insertLayoutBlock(editor: YjsEditor, build: (sharedRoot: YSharedRoot) => YBlock) {
+function insertLayoutBlock(
+  editor: YjsEditor,
+  build: (sharedRoot: YSharedRoot) => YBlock,
+  focusId?: () => string | undefined
+) {
   const entry = getBlockEntry(editor);
 
   if (!entry) return;
@@ -96,7 +100,9 @@ function insertLayoutBlock(editor: YjsEditor, build: (sharedRoot: YSharedRoot) =
     'carehubInsertLayoutBlock'
   );
 
-  if (newId) selectFirstText(editor, newId);
+  const target = focusId?.() || newId;
+
+  if (target) selectFirstText(editor, target);
 }
 
 export function carehubInsertColumns(editor: YjsEditor, count: number) {
@@ -123,6 +129,43 @@ export function carehubInsertTabs(editor: YjsEditor) {
     return tabs;
   });
 }
+
+// Meeting notes: summary, notes and a private transcript (see CareHubTranscription.tsx).
+export function carehubInsertMeeting(editor: YjsEditor) {
+  let notesParagraph: string | undefined;
+
+  insertLayoutBlock(
+    editor,
+    (sharedRoot) => {
+      const now = new Date().toISOString();
+      const meeting = createBlock(sharedRoot, {
+        ty: BlockType.AIMeetingBlock,
+        data: { title: '', date: now, created_at: now, recording_state: 'idle', show_notes_directly: false },
+      });
+      const section = (ty: BlockType, index: number) => {
+        const block = createBlock(sharedRoot, { ty, data: {} });
+        const paragraph = newParagraph(sharedRoot);
+
+        updateBlockParent(sharedRoot, paragraph, block, 0);
+        updateBlockParent(sharedRoot, block, meeting, index);
+        return paragraph;
+      };
+
+      section(BlockType.AIMeetingSummaryBlock, 0);
+      notesParagraph = section(BlockType.AIMeetingNotesBlock, 1).get(YjsEditorKey.block_id);
+      section(BlockType.AIMeetingTranscriptionBlock, 2);
+      return meeting;
+    },
+    () => notesParagraph
+  );
+}
+
+export const CareHubMeetingIcon = () => (
+  <svg width='1em' height='1em' viewBox='0 0 20 20' fill='none' stroke='currentColor' strokeWidth='1.4'>
+    <rect x='7.5' y='2.5' width='5' height='9' rx='2.5' />
+    <path d='M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5M7 17.5h6' strokeLinecap='round' />
+  </svg>
+);
 
 export const CareHubColumnsIcon = ({ count = 2 }: { count?: number }) => (
   <svg width='1em' height='1em' viewBox='0 0 20 20' fill='none' stroke='currentColor' strokeWidth='1.4'>
