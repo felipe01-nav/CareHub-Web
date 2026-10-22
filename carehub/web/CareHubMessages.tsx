@@ -11,6 +11,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
+import {
+  AttachedPages,
+  filterPages,
+  GrantAccessDialog,
+  PageCard,
+  type PageEntry,
+  PageGlyph,
+  PageMentionList,
+  PagePickerDialog,
+  pagesInText,
+  pageToken,
+  plainMessageText,
+  type ShareCheckPage,
+  splitMessage,
+  useSharablePages,
+} from './CareHubSharePage';
+
 export const CAREHUB_MESSAGES_PATH = '/app/messages';
 const API = '/api/carehub/messages';
 const OPEN_CHAT_POLL_MS = 3000;
@@ -73,7 +90,7 @@ function lastPreview(chat: Chat) {
   const last = chat.last;
 
   if (!last) return 'No messages yet';
-  const text = last.deleted ? 'Message deleted' : last.body.replace(/\s+/g, ' ');
+  const text = last.deleted ? 'Message deleted' : plainMessageText(last.body).replace(/\s+/g, ' ');
 
   if (last.mine) return `You: ${text}`;
   if (chat.is_group && last.sender_name) return `${last.sender_name.split(' ')[0]}: ${text}`;
@@ -173,7 +190,7 @@ async function notifyNewMessage() {
     if (!chat || !chat.last) return;
     const who = chat.is_group ? `${chat.last.sender_name} in ${chatTitle(chat)}` : chat.last.sender_name || chatTitle(chat);
     const note = new Notification(who || 'New message', {
-      body: chat.last.deleted ? 'Message deleted' : chat.last.body,
+      body: chat.last.deleted ? 'Message deleted' : plainMessageText(chat.last.body),
       tag: `carehub-chat-${chat.id}`,
     });
 
@@ -315,6 +332,23 @@ function IconButton({ label, onClick, children, testId }: { label: string; onCli
 const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g;
 
 function MessageText({ text }: { text: string }) {
+  const parts = splitMessage(text);
+
+  if (parts.length === 1 && 'text' in parts[0]) return <LinkText text={text} />;
+  return (
+    <>
+      {parts.map((part, i) =>
+        'page' in part ? (
+          <PageCard key={i} page={part.page} />
+        ) : part.text.trim() ? (
+          <LinkText key={i} text={part.text.replace(/^\n+|\n+$/g, '')} />
+        ) : null
+      )}
+    </>
+  );
+}
+
+function LinkText({ text }: { text: string }) {
   const parts = text.split(URL_RE);
 
   return (
@@ -560,6 +594,25 @@ function Conversation({
   const [menu, setMenu] = useState(false);
   const [adding, setAdding] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [attached, setAttached] = useState<PageEntry[]>([]);
+  const [pickingPage, setPickingPage] = useState(false);
+  const [mention, setMention] = useState<{ start: number; end: number; query: string } | null>(null);
+  const [mentionActive, setMentionActive] = useState(0);
+  const [grantAsk, setGrantAsk] = useState<{ body: string; pages: PageEntry[]; checks: ShareCheckPage[] } | null>(
+    null
+  );
+  const sharablePages = useSharablePages();
+  const mentionPages = useMemo(
+    () =>
+      mention
+        ? filterPages(
+            sharablePages.filter((p) => !attached.some((a) => a.viewId === p.viewId)),
+            mention.query,
+            8
+          )
+        : [],
+    [mention, sharablePages, attached]
+  );
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const cursorRef = useRef(0);
@@ -683,7 +736,62 @@ function Conversation({
     }
   };
 
-  const send = async (text: string, retryId?: string) => {
+  // Page cards go at the end of the message text.
+  const composeBody = (text: string, pages: PageEntry[]) =>
+    [text.trim(), ...pages.map((p) => pageToken(p))].filter(Boolean).join('\n');
+
+  const findMention = (value: string, caret: number) => {
+    const before = value.slice(0, caret);
+    const match = /(^|\s)@([^\s@]{0,40})$/.exec(before);
+
+    if (!match) return null;
+    return { start: caret - match[2].length - 1, end: caret, query: match[2] };
+  };
+
+  const pickMention = (page: PageEntry) => {
+    if (!mention) return;
+    const next = draft.slice(0, mention.start) + draft.slice(mention.end);
+
+    setDraft(next);
+    setAttached((prev) => (prev.some((p) => p.viewId === page.viewId) ? prev : [...prev, page].slice(0, 10)));
+    setMention(null);
+    setMentionActive(0);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(mention.start, mention.start);
+    });
+  };
+
+  // Before sending page cards, check that everyone in the chat can open them.
+  const submit = async (text: string, pages: PageEntry[]) => {
+    const body = composeBody(text, pages);
+
+    if (!body) return;
+    setDraft('');
+    setAttached([]);
+    setMention(null);
+    if (inputRef.current) inputRef.current.style.height = 'auto';
+    if (pagesInText(body).length && chat.members.length) {
+      try {
+        const res = await call<{ pages: ShareCheckPage[] }>('post', `${API}/chats/${chat.id}/share-check`, { body });
+        const checks = res?.pages ?? [];
+
+        if (checks.some((c) => c.missing.length) || pages.some((p) => p.isPrivate)) {
+          setGrantAsk({ body, pages, checks });
+          return;
+        }
+      } catch {
+        // checking is optional; send anyway
+      }
+    }
+
+    void send(body);
+  };
+
+  const send = async (text: string, retryId?: string, grant = false) => {
     const body = text.trim();
 
     if (!body) return;
@@ -702,10 +810,14 @@ function Conversation({
     stickRef.current = true;
     setMessages((prev) => [...prev.filter((m) => m.id !== tempId), temp]);
     try {
-      const saved = await call<Message>('post', `${API}/chats/${chat.id}/messages`, { body });
+      const saved = await call<Message & { granted?: string[] }>('post', `${API}/chats/${chat.id}/messages`, {
+        body,
+        grant,
+      });
 
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       if (saved) merge([saved]);
+      if (saved?.granted?.length) setError(`${saved.granted.join(', ')} can now open the shared page.`);
       void onChanged();
     } catch (err) {
       setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, failed: true } : m)));
@@ -963,16 +1075,29 @@ function Conversation({
       )}
 
       <form
-        className='shrink-0 px-4 pb-4'
+        className='relative shrink-0 px-4 pb-4'
         onSubmit={(e) => {
           e.preventDefault();
-          const text = draft;
-
-          setDraft('');
-          void send(text);
+          void submit(draft, attached);
         }}
       >
+        {mention && (
+          <div className='relative'>
+            <PageMentionList pages={mentionPages} active={mentionActive} onPick={pickMention} />
+          </div>
+        )}
+        <AttachedPages pages={attached} onRemove={(id) => setAttached((prev) => prev.filter((p) => p.viewId !== id))} />
         <div className='flex items-end gap-2 rounded-[12px] border border-border-primary bg-background-primary p-2 focus-within:border-border-theme-thick'>
+          <button
+            type='button'
+            title='Share a page (or type @)'
+            aria-label='Share a page'
+            data-testid='carehub-share-page'
+            onClick={() => setPickingPage(true)}
+            className='flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-text-secondary hover:bg-fill-content-hover hover:text-text-primary'
+          >
+            <PageGlyph />
+          </button>
           <textarea
             ref={inputRef}
             rows={1}
@@ -982,30 +1107,85 @@ function Conversation({
             onChange={(e) => {
               setDraft(e.target.value);
               const el = e.target;
+              const found = findMention(el.value, el.selectionStart ?? el.value.length);
+
+              setMention(found);
+              if (!found) setMentionActive(0);
 
               el.style.height = 'auto';
               el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
             }}
             onKeyDown={(e) => {
+              if (mention && mentionPages.length) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const step = e.key === 'ArrowDown' ? 1 : -1;
+
+                  setMentionActive((i) => (i + step + mentionPages.length) % mentionPages.length);
+                  return;
+                }
+
+                if ((e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  pickMention(mentionPages[Math.min(mentionActive, mentionPages.length - 1)]);
+                  return;
+                }
+              }
+
+              if (mention && e.key === 'Escape') {
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
+
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !narrow) {
                 e.preventDefault();
-                const text = draft;
-
-                setDraft('');
-                (e.target as HTMLTextAreaElement).style.height = 'auto';
-                void send(text);
+                void submit(draft, attached);
               }
             }}
+            onBlur={() => setTimeout(() => setMention(null), 150)}
             className='max-h-[160px] min-h-[24px] flex-1 resize-none bg-transparent px-1 py-1 text-sm outline-none placeholder:text-text-tertiary'
           />
-          <Button size='sm' type='submit' disabled={!draft.trim()} data-testid='carehub-chat-send'>
+          <Button size='sm' type='submit' disabled={!draft.trim() && !attached.length} data-testid='carehub-chat-send'>
             Send
           </Button>
         </div>
         {!narrow && (
-          <div className='mt-1 px-1 text-[11px] text-text-tertiary'>Enter to send · Shift + Enter for a new line</div>
+          <div className='mt-1 px-1 text-[11px] text-text-tertiary'>
+            Enter to send · Shift + Enter for a new line · @ to share a page
+          </div>
         )}
       </form>
+
+      {pickingPage && (
+        <PagePickerDialog
+          exclude={attached.map((p) => p.viewId)}
+          onClose={() => setPickingPage(false)}
+          onPick={(pages) => {
+            setAttached((prev) => [...prev, ...pages.filter((p) => !prev.some((a) => a.viewId === p.viewId))].slice(0, 10));
+            setPickingPage(false);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        />
+      )}
+
+      {grantAsk && (
+        <GrantAccessDialog
+          checks={grantAsk.checks}
+          pages={grantAsk.pages}
+          onCancel={() => {
+            setDraft(grantAsk.body.replace(/\[\[page:[^\]]*\]\]/g, '').trim());
+            setAttached(grantAsk.pages);
+            setGrantAsk(null);
+          }}
+          onSend={(grant) => {
+            const { body } = grantAsk;
+
+            setGrantAsk(null);
+            void send(body, undefined, grant);
+          }}
+        />
+      )}
 
       {adding && (
         <PeoplePicker

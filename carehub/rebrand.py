@@ -964,6 +964,12 @@ EDITS["src/components/editor/components/panels/slash-panel/SlashPanel.tsx"] += [
      "          ]\n        : []),\n", 1),
 ]
 
+
+# ---------------------------------------------------------------------------
+# CareHub Messages: share pages in a chat (page button or "@"), shown as cards.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubSharePage.tsx"] = "src/components/carehub/CareHubSharePage.tsx"
+
 if __name__ == "__main__":
     sys.exit(main())
 
