@@ -27,7 +27,7 @@ export class MeetingRecordingError extends Error {
 // Settings (kept in this browser)
 // ---------------------------------------------------------------------------
 type Quality = 'fast' | 'accurate';
-export type CarehubTranscribeSettings = { language: string; quality: Quality };
+export type CarehubTranscribeSettings = { language: string; quality: Quality; speakers: boolean };
 
 const SETTINGS_KEY = 'carehub-transcribe-settings';
 const LIB_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
@@ -56,9 +56,10 @@ export function getTranscribeSettings(): CarehubTranscribeSettings {
     return {
       language: LANGUAGES.some(([value]) => value === saved.language) ? (saved.language as string) : 'english',
       quality: saved.quality === 'accurate' ? 'accurate' : 'fast',
+      speakers: saved.speakers !== false,
     };
   } catch {
-    return { language: 'english', quality: 'fast' };
+    return { language: 'english', quality: 'fast', speakers: true };
   }
 }
 
@@ -105,6 +106,10 @@ export function CareHubTranscribeOptions() {
             <option value='fast'>Fast (about 150 MB download)</option>
             <option value='accurate'>Accurate (about 500 MB download, slower)</option>
           </select>
+        </label>
+        <label className='flex items-center gap-1.5' title='Guesses who is talking from the sound of each voice. Not perfect.'>
+          <input type='checkbox' checked={settings.speakers} onChange={(e) => update({ speakers: e.target.checked })} />
+          Label speakers (best guess)
         </label>
       </div>
       <span>
@@ -340,7 +345,243 @@ function cleanText(raw: string | undefined, voicedFrames: number) {
   return text;
 }
 
-type Piece = { audio: Float32Array; turn: number; voiced: number };
+type Piece = { audio: Float32Array; turn: number; voiced: number; who?: string };
+
+// ---------------------------------------------------------------------------
+// Speaker labels (best guess, all on this computer)
+// A short "voiceprint" per sentence: the average shape of the voice (MFCC)
+// and its pitch. Similar prints get the same "Speaker N".
+// ---------------------------------------------------------------------------
+const FFT_SIZE = 512;
+const MEL_BANDS = 24;
+const CEPSTRA = 12;
+let melBank: Float32Array[] | undefined;
+let hann: Float32Array | undefined;
+
+function melFilters() {
+  if (melBank) return melBank;
+  const mel = (f: number) => 2595 * Math.log10(1 + f / 700);
+  const hz = (m: number) => 700 * (10 ** (m / 2595) - 1);
+  const low = mel(80);
+  const high = mel(5000);
+  const points = Array.from({ length: MEL_BANDS + 2 }, (_, i) => hz(low + ((high - low) * i) / (MEL_BANDS + 1)));
+  const bins = points.map((f) => Math.floor(((FFT_SIZE + 1) * f) / TARGET_RATE));
+
+  melBank = [];
+  for (let m = 1; m <= MEL_BANDS; m++) {
+    const filter = new Float32Array(FFT_SIZE / 2 + 1);
+
+    for (let k = bins[m - 1]; k < bins[m]; k++) filter[k] = (k - bins[m - 1]) / Math.max(1, bins[m] - bins[m - 1]);
+    for (let k = bins[m]; k < bins[m + 1]; k++) filter[k] = (bins[m + 1] - k) / Math.max(1, bins[m + 1] - bins[m]);
+    melBank.push(filter);
+  }
+
+  return melBank;
+}
+
+function fftPower(re: Float32Array): Float32Array {
+  const n = re.length;
+  const im = new Float32Array(n);
+
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const t = re[i];
+
+      re[i] = re[j];
+      re[j] = t;
+    }
+  }
+
+  for (let len = 2; len <= n; len <<= 1) {
+    const angle = (-2 * Math.PI) / len;
+    const wr = Math.cos(angle);
+    const wi = Math.sin(angle);
+
+    for (let i = 0; i < n; i += len) {
+      let cr = 1;
+      let ci = 0;
+
+      for (let k = 0; k < len / 2; k++) {
+        const ar = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+        const ai = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+
+        re[i + k + len / 2] = re[i + k] - ar;
+        im[i + k + len / 2] = im[i + k] - ai;
+        re[i + k] += ar;
+        im[i + k] += ai;
+        const next = cr * wr - ci * wi;
+
+        ci = cr * wi + ci * wr;
+        cr = next;
+      }
+    }
+  }
+
+  const power = new Float32Array(n / 2 + 1);
+
+  for (let k = 0; k <= n / 2; k++) power[k] = re[k] * re[k] + im[k] * im[k];
+  return power;
+}
+
+function framePitch(frame: Float32Array) {
+  const minLag = Math.floor(TARGET_RATE / 400);
+  const maxLag = Math.floor(TARGET_RATE / 70);
+  let energy = 0;
+
+  for (let i = 0; i < frame.length; i++) energy += frame[i] * frame[i];
+  if (energy <= 0) return 0;
+  let best = 0;
+  let bestLag = 0;
+
+  for (let lag = minLag; lag <= maxLag && lag < frame.length - 32; lag++) {
+    let sum = 0;
+
+    for (let i = 0; i + lag < frame.length; i++) sum += frame[i] * frame[i + lag];
+    const r = sum / energy;
+
+    if (r > best) {
+      best = r;
+      bestLag = lag;
+    }
+  }
+
+  return best > 0.35 && bestLag ? TARGET_RATE / bestLag : 0;
+}
+
+type Voiceprint = { mfcc: Float32Array; pitch: number };
+
+/** Average voice shape and pitch of the louder parts of a 16 kHz clip. */
+function voiceprint(audio: Float32Array): Voiceprint | null {
+  const hop = FFT_SIZE / 2;
+  const count = Math.floor((audio.length - FFT_SIZE) / hop);
+
+  if (count < 20) return null;
+  if (!hann) hann = Float32Array.from({ length: FFT_SIZE }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1)));
+  const energies = new Float32Array(count);
+
+  for (let f = 0; f < count; f++) {
+    let e = 0;
+
+    for (let i = 0; i < FFT_SIZE; i++) e += audio[f * hop + i] ** 2;
+    energies[f] = e;
+  }
+
+  const threshold = Float32Array.from(energies).sort()[Math.floor(count * 0.5)];
+  const filters = melFilters();
+  const sum = new Float32Array(CEPSTRA);
+  const pitches: number[] = [];
+  let used = 0;
+  const logMel = new Float32Array(MEL_BANDS);
+
+  for (let f = 0; f < count; f++) {
+    if (energies[f] < threshold || energies[f] <= 0) continue;
+    const frame = new Float32Array(FFT_SIZE);
+
+    for (let i = 0; i < FFT_SIZE; i++) frame[i] = audio[f * hop + i] * (hann as Float32Array)[i];
+    if (f % 2 === 0) {
+      const p = framePitch(audio.subarray(f * hop, f * hop + FFT_SIZE));
+
+      if (p) pitches.push(p);
+    }
+
+    const power = fftPower(frame);
+
+    for (let m = 0; m < MEL_BANDS; m++) {
+      let e = 0;
+      const filter = filters[m];
+
+      for (let k = 0; k < power.length; k++) if (filter[k]) e += filter[k] * power[k];
+      logMel[m] = Math.log(e + 1e-10);
+    }
+
+    for (let c = 1; c <= CEPSTRA; c++) {
+      let v = 0;
+
+      for (let m = 0; m < MEL_BANDS; m++) v += logMel[m] * Math.cos((Math.PI * c * (m + 0.5)) / MEL_BANDS);
+      sum[c - 1] += v;
+    }
+
+    used++;
+  }
+
+  if (used < 10) return null;
+  for (let c = 0; c < CEPSTRA; c++) sum[c] /= used;
+  pitches.sort((a, b) => a - b);
+  return { mfcc: sum, pitch: pitches.length >= 3 ? pitches[Math.floor(pitches.length / 2)] : 0 };
+}
+
+class SpeakerGuesser {
+  private speakers: { mean: Float32Array; pitch: number; count: number }[] = [];
+  private n = 0;
+  private avg = new Float32Array(CEPSTRA);
+  private m2 = new Float32Array(CEPSTRA);
+  private last = '';
+
+  private spread(c: number) {
+    return this.n >= 4 ? Math.max(0.3, Math.sqrt(this.m2[c] / (this.n - 1))) : 2;
+  }
+
+  private distance(a: Voiceprint, s: { mean: Float32Array; pitch: number }) {
+    let sum = 0;
+
+    for (let c = 0; c < CEPSTRA; c++) sum += ((a.mfcc[c] - s.mean[c]) / this.spread(c)) ** 2;
+    const pitchGap = a.pitch && s.pitch ? Math.abs(Math.log(a.pitch / s.pitch)) : 0;
+
+    return Math.sqrt(sum / CEPSTRA) + 1.5 * pitchGap;
+  }
+
+  /** "Speaker N" for this clip, or the previous speaker when unsure. */
+  guess(audio: Float32Array, voicedFrames: number): string {
+    const print = voicedFrames >= 10 ? voiceprint(audio) : null;
+
+    if (!print) return this.last || 'Speaker 1';
+    this.n++;
+    for (let c = 0; c < CEPSTRA; c++) {
+      const delta = print.mfcc[c] - this.avg[c];
+
+      this.avg[c] += delta / this.n;
+      this.m2[c] += delta * (print.mfcc[c] - this.avg[c]);
+    }
+
+    let best = -1;
+    let bestDistance = Infinity;
+
+    this.speakers.forEach((s, i) => {
+      const d = this.distance(print, s);
+
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = i;
+      }
+    });
+    if (best < 0 || (bestDistance > 1.35 && this.speakers.length < 6)) {
+      this.speakers.push({ mean: Float32Array.from(print.mfcc), pitch: print.pitch, count: 1 });
+      best = this.speakers.length - 1;
+    } else {
+      const s = this.speakers[best];
+      const w = 1 / Math.min(20, s.count + 1);
+
+      for (let c = 0; c < CEPSTRA; c++) s.mean[c] += (print.mfcc[c] - s.mean[c]) * w;
+      if (print.pitch) s.pitch = s.pitch ? s.pitch + (print.pitch - s.pitch) * w : print.pitch;
+      s.count++;
+    }
+
+    this.last = `Speaker ${best + 1}`;
+    return this.last;
+  }
+}
+
+function levelOf(analyser: AnalyserNode, buffer: Float32Array) {
+  analyser.getFloatTimeDomainData(buffer);
+  let sum = 0;
+
+  for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
+  return Math.sqrt(sum / buffer.length);
+}
 
 /** One recording: microphone (and meeting tab) -> sentences -> Whisper -> transcript. */
 export class MeetingTranscription {
@@ -363,6 +604,13 @@ export class MeetingTranscription {
   private model?: Promise<void>;
   private modelReady = false;
   private status = '';
+  private speakers = new SpeakerGuesser();
+  private micAnalyser?: AnalyserNode;
+  private tabAnalyser?: AnalyserNode;
+  private levelBuffer = new Float32Array(2048);
+  private micLevel = 0;
+  private tabLevel = 0;
+  private lastSpeaker = '';
 
   constructor(
     _workspaceId: string,
@@ -422,7 +670,18 @@ export class MeetingTranscription {
       });
       this.processor.port.onmessage = ({ data }: MessageEvent<ArrayBuffer>) => this.onFrame(new Int16Array(data));
       for (const stream of this.streams) {
-        this.context.createMediaStreamSource(new MediaStream(stream.getAudioTracks())).connect(this.processor);
+        const input = this.context.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+
+        input.connect(this.processor);
+        if (this.settings.speakers && source === 'meeting') {
+          // Which side is talking: this computer's microphone ("You") or the meeting tab.
+          const analyser = this.context.createAnalyser();
+
+          analyser.fftSize = 2048;
+          input.connect(analyser);
+          if (stream.getVideoTracks().length) this.tabAnalyser = analyser;
+          else this.micAnalyser = analyser;
+        }
       }
 
       this.processor.connect(this.context.destination);
@@ -507,6 +766,10 @@ export class MeetingTranscription {
     if (speech) {
       this.voiced++;
       this.silentRun = 0;
+      if (this.micAnalyser && this.tabAnalyser) {
+        this.micLevel += levelOf(this.micAnalyser, this.levelBuffer);
+        this.tabLevel += levelOf(this.tabAnalyser, this.levelBuffer);
+      }
     } else {
       this.silentRun++;
     }
@@ -530,9 +793,39 @@ export class MeetingTranscription {
     this.frames = [];
     this.voiced = 0;
     this.silentRun = 0;
-    if (voiced < 3) return;
-    this.queue.push({ audio: toModelAudio(frames, this.sampleRate), turn: ++this.turn, voiced });
+    if (voiced < 3) {
+      this.micLevel = 0;
+      this.tabLevel = 0;
+      return;
+    }
+
+    this.queue.push(this.piece(frames, voiced));
     void this.work().catch((error: unknown) => this.fail(error));
+  }
+
+  private piece(frames: Float32Array[], voiced: number): Piece {
+    const audio = toModelAudio(frames, this.sampleRate);
+    let who: string | undefined;
+
+    if (this.settings.speakers) {
+      try {
+        if (this.micAnalyser && this.tabAnalyser && this.micLevel > this.tabLevel * 1.5) who = 'You';
+        else who = this.speakers.guess(audio, voiced);
+      } catch {
+        who = undefined;
+      }
+    }
+
+    this.micLevel = 0;
+    this.tabLevel = 0;
+    return { audio, turn: ++this.turn, voiced, who };
+  }
+
+  private label(piece: Piece, text: string) {
+    if (!piece.who) return text;
+    if (piece.who === this.lastSpeaker) return text;
+    this.lastSpeaker = piece.who;
+    return `${piece.who}: ${text}`;
   }
 
   private work(): Promise<void> {
@@ -552,7 +845,7 @@ export class MeetingTranscription {
           ]);
           const text = cleanText(reply.text, piece.voiced);
 
-          if (text) this.callbacks.onTranscript(text, piece.turn);
+          if (text) this.callbacks.onTranscript(this.label(piece, text), piece.turn);
         }
 
         if (this.status.startsWith('Catching up')) {
@@ -587,7 +880,7 @@ export class MeetingTranscription {
         const voiced = this.voiced;
 
         this.frames = [];
-        if (voiced >= 3) this.queue.push({ audio: toModelAudio(frames, this.sampleRate), turn: ++this.turn, voiced });
+        if (voiced >= 3) this.queue.push(this.piece(frames, voiced));
       }
 
       await this.context?.close().catch(() => undefined);

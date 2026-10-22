@@ -1138,6 +1138,162 @@ EDITS.update({
     ],
 })
 
+
+# ---------------------------------------------------------------------------
+# CareHub extras: roles & permissions, automations, meeting notes from the
+# calendar, speaker labels, a "Spaces" heading, nightly backups / status page,
+# page templates, reminders, phone tweaks, analytics and page versions.
+# ---------------------------------------------------------------------------
+for _name in [
+    "CareHubCore.ts", "CareHubUi.tsx", "CareHubHistory.tsx", "CareHubAnalytics.tsx", "CareHubAdmin.tsx",
+    "CareHubStatus.tsx", "CareHubTemplates.tsx", "CareHubMeetingNotes.tsx", "CareHubReminders.tsx",
+    "CareHubBackground.tsx", "CareHubSidebarExtras.tsx",
+]:
+    EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
+
+EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
+    ("import CareHubMessagesPage from '@/components/carehub/CareHubMessages';\n",
+     "import CareHubMessagesPage from '@/components/carehub/CareHubMessages';\n"
+     "import CareHubAnalyticsPage from '@/components/carehub/CareHubAnalytics';\n"
+     "import CareHubBackground from '@/components/carehub/CareHubBackground';\n"
+     "import CareHubStatusPage from '@/components/carehub/CareHubStatus';\n", 1),
+    ("        <Route path={'messages'} element={<CareHubMessagesPage />} />\n",
+     "        <Route path={'messages'} element={<CareHubMessagesPage />} />\n"
+     "        <Route path={'analytics'} element={<CareHubAnalyticsPage />} />\n", 1),
+    ("      <Route path={'invited/:code'} element={<InviteCode />} />\n",
+     "      <Route path={'status'} element={<CareHubStatusPage />} />\n"
+     "      <Route path={'invited/:code'} element={<InviteCode />} />\n", 1),
+    ("  return (\n    <Routes>\n", "  return (\n    <>\n    <CareHubBackground />\n    <Routes>\n", 1),
+    ("    </Routes>\n  );\n", "    </Routes>\n    </>\n  );\n", 1),
+])
+
+EDITS.setdefault("src/components/app/header/AppHeader.tsx", []).extend([
+    ("|| window.location.pathname === '/app/messages';\n",
+     "|| window.location.pathname === '/app/messages' || window.location.pathname === '/app/analytics';\n", 1),
+])
+
+# Page menu: our own Version history (works without the paid history service).
+EDITS.setdefault("src/components/app/header/MoreActions.tsx", []).extend([
+    ("import('@/components/document/history/DocumentHistoryModal')", "import('@/components/carehub/CareHubHistory')", 1),
+    ("  const pageHistoryEnabled = usePageHistoryEnabled();\n",
+     "  void usePageHistoryEnabled();\n  const pageHistoryEnabled = true;\n", 1),
+    ("        canUsePageHistory={canUsePageHistory}\n", "        canUsePageHistory={canUsePageHistory || true}\n", 1),
+])
+
+EDITS.setdefault("src/components/app/header/MoreActionsContent.tsx", []).extend([
+    ("import { CareHubFullWidthIcon, setCarehubFullWidth, useCarehubFullWidth } from '@/components/carehub/CareHubFullWidth';\n",
+     "import { CareHubFullWidthIcon, setCarehubFullWidth, useCarehubFullWidth } from '@/components/carehub/CareHubFullWidth';\n"
+     "import { openCareHubDialog, useCareHubCan } from '@/components/carehub/CareHubCore';\n", 1),
+    ("  const carehubFullWidth = useCarehubFullWidth(viewId);\n",
+     "  const carehubFullWidth = useCarehubFullWidth(viewId);\n"
+     "  const carehubCanTemplates = useCareHubCan(workspaceId, 'templates');\n"
+     "  const carehubCanAnalytics = useCareHubCan(workspaceId, 'analytics');\n", 1),
+    ("          <Switch checked={carehubFullWidth} tabIndex={-1} aria-hidden className={'pointer-events-none'} />\n"
+     "        </DropdownMenuItem>\n"
+     "      )}\n",
+     "          <Switch checked={carehubFullWidth} tabIndex={-1} aria-hidden className={'pointer-events-none'} />\n"
+     "        </DropdownMenuItem>\n"
+     "      )}\n"
+     "      {workspaceId && (\n"
+     "        <DropdownMenuItem\n"
+     "          data-testid={'more-page-remind-me'}\n"
+     "          onSelect={() => {\n"
+     "            itemClicked?.();\n"
+     "            openCareHubDialog({ kind: 'reminder', workspaceId, pageId: viewId, title: view?.name || 'Page' });\n"
+     "          }}\n"
+     "        >\n"
+     "          <span className={'flex h-5 w-5 items-center justify-center text-base'}>⏰</span>\n"
+     "          <span className={'flex-1'}>Remind me…</span>\n"
+     "        </DropdownMenuItem>\n"
+     "      )}\n"
+     "      {workspaceId && isDocument && carehubCanTemplates && (\n"
+     "        <DropdownMenuItem\n"
+     "          data-testid={'more-page-save-template'}\n"
+     "          onSelect={() => {\n"
+     "            itemClicked?.();\n"
+     "            openCareHubDialog({ kind: 'save-template', workspaceId, pageId: viewId, title: view?.name || '' });\n"
+     "          }}\n"
+     "        >\n"
+     "          <span className={'flex h-5 w-5 items-center justify-center text-base'}>📄</span>\n"
+     "          <span className={'flex-1'}>Save as template</span>\n"
+     "        </DropdownMenuItem>\n"
+     "      )}\n"
+     "      {workspaceId && carehubCanAnalytics && (\n"
+     "        <DropdownMenuItem\n"
+     "          data-testid={'more-page-analytics'}\n"
+     "          onSelect={() => {\n"
+     "            itemClicked?.();\n"
+     "            openCareHubDialog({ kind: 'page-analytics', workspaceId, pageId: viewId, title: view?.name || '' });\n"
+     "          }}\n"
+     "        >\n"
+     "          <span className={'flex h-5 w-5 items-center justify-center text-base'}>📈</span>\n"
+     "          <span className={'flex-1'}>Page analytics</span>\n"
+     "        </DropdownMenuItem>\n"
+     "      )}\n", 1),
+])
+
+# Editor: count edits for analytics and keep automatic page versions.
+EDITS.setdefault("src/components/editor/Editable.tsx", []).extend([
+    ("import { cn } from '@/lib/utils';\n",
+     "import { cn } from '@/lib/utils';\nimport { useCareHubDocTracking } from '@/components/carehub/CareHubHistory';\n", 1),
+    ("  const editor = useSlate();\n",
+     "  const editor = useSlate();\n\n  useCareHubDocTracking(previewId ? undefined : viewId, workspaceId, editor, readOnly);\n", 1),
+])
+
+# Sidebar: Templates / Analytics buttons, "Spaces" heading, New page only for roles that may create.
+EDITS.setdefault("src/components/app/SideBar.tsx", []).extend([
+    ("import { CareHubSidebarTabs, CareHubUpcomingEvents } from '@/components/carehub/CareHubSidebarHome';\n",
+     "import { CareHubSidebarTabs, CareHubUpcomingEvents } from '@/components/carehub/CareHubSidebarHome';\n"
+     "import { CareHubCanCreate, CareHubSidebarExtras } from '@/components/carehub/CareHubSidebarExtras';\n", 1),
+    ("          <CareHubSidebarTabs />\n", "          <CareHubSidebarTabs />\n          <CareHubSidebarExtras />\n", 1),
+    ("              <NewPage />\n", "              <CareHubCanCreate>\n                <NewPage />\n              </CareHubCanCreate>\n", 1),
+])
+
+EDITS.setdefault("src/components/app/outline/Outline.tsx", []).extend([
+    ("import { CareHubQuickAccess } from '@/components/carehub/CareHubQuickAccess';\n",
+     "import { CareHubQuickAccess } from '@/components/carehub/CareHubQuickAccess';\n"
+     "import { CareHubSpacesHeader } from '@/components/carehub/CareHubSidebarExtras';\n", 1),
+    ("        <ShareWithMe width={width - 20} />\n",
+     "        <ShareWithMe width={width - 20} />\n        <CareHubSpacesHeader />\n", 1),
+])
+
+EDITS.setdefault("src/components/_shared/mobile-topbar/MobileFolder.tsx", []).extend([
+    ("import { CareHubSidebarTabs, CareHubUpcomingEvents } from '@/components/carehub/CareHubSidebarHome';\n",
+     "import { CareHubSidebarTabs, CareHubUpcomingEvents } from '@/components/carehub/CareHubSidebarHome';\n"
+     "import { CareHubSidebarExtras } from '@/components/carehub/CareHubSidebarExtras';\n", 1),
+    ("        <CareHubSidebarTabs onNavigate={onClose} />\n",
+     "        <CareHubSidebarTabs onNavigate={onClose} />\n        <div className={'px-2'}>\n          <CareHubSidebarExtras onNavigate={onClose} />\n        </div>\n", 1),
+])
+
+# Settings: Roles & permissions, Automations, Data & backups.
+EDITS.setdefault("src/components/app/settings/SettingMenu.tsx", []).extend([
+    ("import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsIcon, useCarehubIsAdmin } from '@/components/carehub/CareHubAccounts';\n",
+     "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsIcon, useCarehubIsAdmin } from '@/components/carehub/CareHubAccounts';\n"
+     "import {\n  CAREHUB_AUTOMATIONS_ITEM,\n  CAREHUB_DATA_ITEM,\n  CAREHUB_ROLES_ITEM,\n  CareHubAutomationsIcon,\n"
+     "  CareHubDataIcon,\n  CareHubRolesIcon,\n  useCareHubSettingsAccess,\n} from '@/components/carehub/CareHubAdmin';\n", 1),
+    ("  const carehubIsAdmin = useCarehubIsAdmin();\n\n  const options = useMemo(() => {\n",
+     "  const carehubIsAdmin = useCarehubIsAdmin();\n  const carehubAccess = useCareHubSettingsAccess();\n\n  const options = useMemo(() => {\n", 1),
+    ("              IconComponent: CareHubAccountsIcon,\n            },\n          ]\n        : []),\n",
+     "              IconComponent: CareHubAccountsIcon,\n            },\n          ]\n        : []),\n"
+     "      ...(carehubAccess.roles\n        ? [{ value: CAREHUB_ROLES_ITEM as SettingMenuItem, label: 'Roles & permissions', IconComponent: CareHubRolesIcon }]\n        : []),\n"
+     "      ...(carehubAccess.automations\n        ? [{ value: CAREHUB_AUTOMATIONS_ITEM as SettingMenuItem, label: 'Automations', IconComponent: CareHubAutomationsIcon }]\n        : []),\n"
+     "      ...(carehubAccess.data\n        ? [{ value: CAREHUB_DATA_ITEM as SettingMenuItem, label: 'Data & backups', IconComponent: CareHubDataIcon }]\n        : []),\n", 1),
+    ("  }, [showBilling, t, carehubIsAdmin]);\n",
+     "  }, [showBilling, t, carehubIsAdmin, carehubAccess.roles, carehubAccess.automations, carehubAccess.data]);\n", 1),
+])
+
+EDITS.setdefault("src/components/app/settings/Settings.tsx", []).extend([
+    ("import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsPanel, useCarehubIsAdmin } from '@/components/carehub/CareHubAccounts';\n",
+     "import { CAREHUB_ACCOUNTS_ITEM, CareHubAccountsPanel, useCarehubIsAdmin } from '@/components/carehub/CareHubAccounts';\n"
+     "import {\n  CAREHUB_AUTOMATIONS_ITEM,\n  CAREHUB_DATA_ITEM,\n  CAREHUB_ROLES_ITEM,\n  CareHubAutomationsPanel,\n"
+     "  CareHubDataPanel,\n  CareHubRolesPanel,\n} from '@/components/carehub/CareHubAdmin';\n", 1),
+    ("          <CareHubAccountsPanel myEmail={currentUser?.email} />\n        )}\n",
+     "          <CareHubAccountsPanel myEmail={currentUser?.email} />\n        )}\n"
+     "        {open && (selectedItem as string) === CAREHUB_ROLES_ITEM && <CareHubRolesPanel />}\n"
+     "        {open && (selectedItem as string) === CAREHUB_AUTOMATIONS_ITEM && <CareHubAutomationsPanel />}\n"
+     "        {open && (selectedItem as string) === CAREHUB_DATA_ITEM && <CareHubDataPanel />}\n", 1),
+])
+
 if __name__ == "__main__":
     sys.exit(main())
 

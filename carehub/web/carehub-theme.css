@@ -278,3 +278,53 @@ body {
 .carehub-frozen-last {
   box-shadow: 1px 0 0 var(--border-primary), 6px 0 8px -6px rgba(0, 0, 0, 0.18);
 }
+
+/* CareHub: phones and small tablets. */
+@media (max-width: 640px) {
+  /* 16px text in fields stops iPhone Safari from zooming in when typing. */
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='search'],
+  input[type='datetime-local'],
+  input[type='time'],
+  input:not([type]),
+  select,
+  textarea,
+  .carehub-input {
+    font-size: 16px !important;
+  }
+
+  /* CareHub windows use the whole screen. */
+  .carehub-modal-backdrop {
+    padding: 0 !important;
+    align-items: stretch !important;
+  }
+  .carehub-modal {
+    max-width: 100% !important;
+    max-height: 100% !important;
+    height: 100%;
+    border-radius: 0 !important;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Bigger tap targets in menus and lists. */
+  [role='menuitem'],
+  [role='option'],
+  [role='tab'] {
+    min-height: 40px;
+  }
+
+  .carehub-analytics table {
+    font-size: 13px;
+  }
+}
+
+/* Notch / home-bar safe areas on phones added to the home screen. */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
