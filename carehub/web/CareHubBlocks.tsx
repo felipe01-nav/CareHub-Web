@@ -1,5 +1,6 @@
 // CareHub: page layout blocks — columns (2/3/4) and tabs.
-import React, { forwardRef, memo, useCallback, useEffect, useState } from 'react';
+import DOMPurify from 'dompurify';
+import React, { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Editor, Element, Path, Transforms } from 'slate';
 import { ReactEditor, useSlateStatic } from 'slate-react';
@@ -14,16 +15,19 @@ import {
   getBlock,
   getBlockIndex,
   getParent,
+  moveNode,
   updateBlockParent,
 } from '@/application/slate-yjs/utils/yjs';
-import { BlockType, YBlock, YjsEditorKey, YSharedRoot } from '@/application/types';
+import { BlockType, ViewIconType, YBlock, YjsEditorKey, YSharedRoot } from '@/application/types';
+import { CustomIconPopover } from '@/components/_shared/cutsom-icon/CustomIconPopover';
 import { EditorElementProps } from '@/components/editor/editor.type';
 import { useEditorContext } from '@/components/editor/EditorContext';
+import { renderColor } from '@/utils/color';
 
 export const CAREHUB_TABS = 'carehub_tabs' as BlockType;
 export const CAREHUB_TAB = 'carehub_tab' as BlockType;
 
-type TabData = { name?: string; icon?: string };
+type TabData = { name?: string; icon?: string; icon_svg?: string };
 
 function newParagraph(sharedRoot: YSharedRoot) {
   return createBlock(sharedRoot, { ty: BlockType.Paragraph, data: {} });
@@ -204,9 +208,44 @@ const TAB_SIZE_STYLE: Record<TabSize, React.CSSProperties> = {
   h1: { fontSize: 30, fontWeight: 700, minHeight: 54 },
 };
 
-const TAB_ICONS = ['📄', '📋', '📝', '📌', '📅', '🗓️', '✅', '⭐', '❤️', '🏠', '👤', '👥', '💊', '🩺', '🏥', '📞', '💬', '📊', '📁', '🔒', '⚠️', '💡', '🎯', '🧾'];
+// Icons picked from the "Icons" tab are stored as a small coloured SVG.
+function iconSvg(content: string, color?: string) {
+  return content
+    .split('black')
+    .join(color ? renderColor(color) : 'currentColor')
+    .replace('<svg', '<svg width="100%" height="100%"');
+}
 
-type TabMenu = { index: number; x: number; y: number; view: 'main' | 'icon' };
+function TabIcon({ tab }: { tab: { data?: TabData } }) {
+  const svg = tab.data?.icon_svg;
+  const clean = useMemo(
+    () => (svg ? DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } }) : ''),
+    [svg]
+  );
+
+  if (clean) {
+    return (
+      <span
+        data-carehub-tab-icon
+        className={'inline-block shrink-0'}
+        style={{ width: '1em', height: '1em' }}
+        dangerouslySetInnerHTML={{ __html: clean }}
+      />
+    );
+  }
+
+  if (tab.data?.icon) {
+    return (
+      <span data-carehub-tab-icon className={'shrink-0 leading-none'} style={{ fontSize: '1em' }}>
+        {tab.data.icon}
+      </span>
+    );
+  }
+
+  return null;
+}
+
+type TabMenu = { index: number; x: number; y: number };
 
 function TabMenuItem({ onClick, children, danger }: { onClick: () => void; children: React.ReactNode; danger?: boolean }) {
   return (
@@ -254,7 +293,9 @@ export const CareHubTabs = memo(
     const [editingId, setEditingId] = useState<string | null>(null);
     const [draft, setDraft] = useState('');
     const [menu, setMenu] = useState<TabMenu | null>(null);
-    const [iconDraft, setIconDraft] = useState('');
+    const [picker, setPicker] = useState<TabMenu | null>(null);
+    const [dragFrom, setDragFrom] = useState<number | null>(null);
+    const [dropAt, setDropAt] = useState<number | null>(null);
     const [copied, setCopied] = useState(false);
     const activeIndex = Math.min(active, Math.max(tabs.length - 1, 0));
 
@@ -331,17 +372,98 @@ export const CareHubTabs = memo(
       setEditingId(tab.blockId);
     };
 
-    const setIcon = (index: number, icon: string) => {
+    const setIcon = (index: number, icon: string, svg = '') => {
       const tab = tabs[index];
 
       if (!tab) return;
-      CustomEditor.setBlockData(editor, tab.blockId, { icon: icon.trim() });
+      CustomEditor.setBlockData(editor, tab.blockId, { icon: icon.trim(), icon_svg: svg });
       setMenu(null);
+      setPicker(null);
     };
 
-    const focusOnce = useCallback((el: HTMLInputElement | null) => {
-      el?.focus({ preventScroll: true });
-    }, []);
+    // Drag a tab to a new place. "to" is the gap index (0 = before the first tab).
+    const moveTab = useCallback(
+      (from: number, to: number) => {
+        const tab = tabs[from];
+
+        if (!tab || to === from || to === from + 1) return;
+        const order = tabs.map((_, i) => i);
+
+        order.splice(from, 1);
+        order.splice(to > from ? to - 1 : to, 0, from);
+        Transforms.deselect(editor);
+        executeOperations(
+          editor.sharedRoot,
+          [
+            () => {
+              const sharedRoot = editor.sharedRoot;
+              const parent = getBlock(blockId, sharedRoot);
+              const source = getBlock(tab.blockId, sharedRoot);
+
+              if (parent && source) moveNode(sharedRoot, source, parent, to);
+            },
+          ],
+          'carehubMoveTab'
+        );
+        setActive(Math.max(0, order.indexOf(activeIndex)));
+      },
+      [editor, blockId, tabs, activeIndex, setActive]
+    );
+
+    // Drag with the mouse (the editor blocks normal browser drag and drop here).
+    const dragRef = useRef<{ from: number; x: number; moved: boolean; at: number | null } | null>(null);
+    const justDragged = useRef(false);
+    const headerRef = useRef<HTMLDivElement | null>(null);
+
+    const startDrag = (e: React.MouseEvent, index: number) => {
+      if (readOnly || editingId !== null || e.button !== 0 || tabs.length < 2) return;
+      dragRef.current = { from: index, x: e.clientX, moved: false, at: null };
+
+      const onMove = (ev: MouseEvent) => {
+        const drag = dragRef.current;
+
+        if (!drag) return;
+        if (!drag.moved && Math.abs(ev.clientX - drag.x) < 6) return;
+        drag.moved = true;
+        const items = Array.from(
+          headerRef.current?.querySelectorAll<HTMLElement>('[data-carehub-tab-drag]') ?? []
+        );
+        let at = items.length;
+
+        for (let i = 0; i < items.length; i++) {
+          const rect = items[i].getBoundingClientRect();
+
+          if (ev.clientX < rect.left + rect.width / 2) {
+            at = i;
+            break;
+          }
+        }
+
+        drag.at = at;
+        setDragFrom(drag.from);
+        setDropAt(at);
+      };
+
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('mouseup', onUp, true);
+        const drag = dragRef.current;
+
+        dragRef.current = null;
+        setDragFrom(null);
+        setDropAt(null);
+        if (drag?.moved) {
+          justDragged.current = true;
+          setTimeout(() => {
+            justDragged.current = false;
+          }, 0);
+          if (drag.at !== null) moveTab(drag.from, drag.at);
+        }
+      };
+
+      window.addEventListener('mousemove', onMove, true);
+      window.addEventListener('mouseup', onUp, true);
+    };
 
     const closeMenu = useCallback(() => {
       setMenu(null);
@@ -398,7 +520,10 @@ export const CareHubTabs = memo(
       <div ref={ref} {...attributes} style={style} className={`${className ?? ''} carehub-tabs`} data-carehub-tabs={blockId}>
         <div
           contentEditable={false}
-          className={'flex select-none flex-wrap items-end gap-1 border-b border-border-primary'}
+          ref={headerRef}
+          className={`flex select-none flex-wrap items-end gap-1 border-b border-border-primary ${
+            dragFrom !== null ? 'cursor-grabbing' : ''
+          }`}
           onMouseDown={(e) => {
             if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault();
           }}
@@ -407,7 +532,6 @@ export const CareHubTabs = memo(
           {tabs.map((tab, index) => {
             const isActive = index === activeIndex;
             const name = tab.data?.name || `Tab ${index + 1}`;
-            const icon = tab.data?.icon;
 
             if (editingId === tab.blockId) {
               return (
@@ -437,30 +561,43 @@ export const CareHubTabs = memo(
             return (
               <div
                 key={tab.blockId}
+                data-carehub-tab-drag={index}
+                onMouseDown={(e) => startDrag(e, index)}
                 className={`group relative flex items-center gap-1 px-3 ${
                   isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'
                 } ${isActive && size === 'body' ? 'font-medium' : ''}`}
-                style={{ ...sizeStyle, boxShadow: isActive ? 'inset 0 -2px 0 currentColor' : undefined }}
+                style={{
+                  ...sizeStyle,
+                  opacity: dragFrom === index ? 0.5 : undefined,
+                  boxShadow:
+                    [
+                      isActive ? 'inset 0 -2px 0 currentColor' : '',
+                      dragFrom !== null && dropAt === index ? 'inset 2px 0 0 var(--fill-theme-thick, #2563eb)' : '',
+                      dragFrom !== null && dropAt === index + 1 && index === tabs.length - 1
+                        ? 'inset -2px 0 0 var(--fill-theme-thick, #2563eb)'
+                        : '',
+                    ]
+                      .filter(Boolean)
+                      .join(', ') || undefined,
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   setCopied(false);
-                  setMenu({ index, x: e.clientX, y: e.clientY, view: 'main' });
+                  setMenu({ index, x: e.clientX, y: e.clientY });
                 }}
               >
                 <button
                   type={'button'}
                   data-carehub-tab={index}
                   className={'flex max-w-[260px] items-center gap-[0.35em] truncate'}
-                  title={readOnly ? name : `${name} — double-click to rename, right-click for more`}
-                  onClick={() => switchTo(index)}
+                  title={readOnly ? name : `${name} — double-click to rename, drag to move, right-click for more`}
+                  onClick={() => {
+                    if (!justDragged.current) switchTo(index);
+                  }}
                   onDoubleClick={() => startRename(index)}
                 >
-                  {icon ? (
-                    <span data-carehub-tab-icon className={'shrink-0 leading-none'} style={{ fontSize: '1em' }}>
-                      {icon}
-                    </span>
-                  ) : null}
+                  <TabIcon tab={tab} />
                   <span className={'truncate'}>{name}</span>
                 </button>
                 {!readOnly && isActive && tabs.length > 1 && (
@@ -505,11 +642,10 @@ export const CareHubTabs = memo(
                 }
                 style={{
                   left: Math.min(menu.x, window.innerWidth - 232),
-                  top: Math.min(menu.y, window.innerHeight - (menu.view === 'icon' ? 250 : 330)),
+                  top: Math.min(menu.y, window.innerHeight - 330),
                 }}
               >
-                {menu.view === 'main' ? (
-                  <>
+                <>
                     {!readOnly && (
                       <TabMenuItem
                         onClick={() => {
@@ -525,8 +661,8 @@ export const CareHubTabs = memo(
                     {!readOnly && (
                       <TabMenuItem
                         onClick={() => {
-                          setIconDraft(menuTab.data?.icon || '');
-                          setMenu({ ...menu, view: 'icon' });
+                          setPicker(menu);
+                          closeMenu();
                         }}
                       >
                         Edit icon
@@ -567,54 +703,33 @@ export const CareHubTabs = memo(
                         </TabMenuItem>
                       </>
                     )}
-                  </>
-                ) : (
-                  <div className={'p-1'}>
-                    <div className={'grid grid-cols-6 gap-0.5'}>
-                      {TAB_ICONS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          type={'button'}
-                          data-carehub-icon-choice
-                          onClick={() => setIcon(menu.index, emoji)}
-                          className={'flex h-8 w-8 items-center justify-center rounded-[6px] text-lg hover:bg-fill-content-hover'}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                    <div className={'mt-2 flex items-center gap-1'}>
-                      <input
-                        ref={focusOnce}
-                        value={iconDraft}
-                        data-carehub-icon-input
-                        placeholder={'Type or paste an emoji'}
-                        onChange={(e) => setIconDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === 'Enter') setIcon(menu.index, Array.from(iconDraft.trim()).slice(0, 4).join(''));
-                        }}
-                        className={
-                          'h-8 min-w-0 flex-1 rounded-[6px] border border-border-primary bg-transparent px-2 text-sm text-text-primary outline-none'
-                        }
-                      />
-                      <button
-                        type={'button'}
-                        onClick={() => setIcon(menu.index, Array.from(iconDraft.trim()).slice(0, 4).join(''))}
-                        className={'h-8 rounded-[6px] px-2 text-sm hover:bg-fill-content-hover'}
-                      >
-                        Set
-                      </button>
-                    </div>
-                    {menuTab.data?.icon ? (
-                      <TabMenuItem onClick={() => setIcon(menu.index, '')}>Remove icon</TabMenuItem>
-                    ) : null}
-                  </div>
-                )}
+                </>
               </div>,
               document.body
             )
           : null}
+        {picker && tabs[picker.index] ? (
+          <span contentEditable={false} onKeyDown={stop} onKeyUp={stop} onBeforeInput={stop} onPaste={stop}>
+            <CustomIconPopover
+              open
+              tabs={['emoji', 'icon']}
+              hideRemove={!tabs[picker.index].data?.icon && !tabs[picker.index].data?.icon_svg}
+              removeIcon={() => setIcon(picker.index, '')}
+              onOpenChange={(open) => {
+                if (!open) setPicker(null);
+              }}
+              onSelectIcon={(icon) => {
+                if (icon.ty === ViewIconType.Emoji) setIcon(picker.index, icon.value);
+                else if (icon.ty === ViewIconType.Icon && icon.content) setIcon(picker.index, '', iconSvg(icon.content, icon.color));
+              }}
+            >
+              <span
+                aria-hidden
+                style={{ position: 'fixed', left: picker.x, top: picker.y, width: 1, height: 1, pointerEvents: 'none' }}
+              />
+            </CustomIconPopover>
+          </span>
+        ) : null}
       </div>
     );
   })

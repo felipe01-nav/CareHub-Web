@@ -970,6 +970,174 @@ EDITS["src/components/editor/components/panels/slash-panel/SlashPanel.tsx"] += [
 # ---------------------------------------------------------------------------
 EXTRA_FILES[HERE / "web" / "CareHubSharePage.tsx"] = "src/components/carehub/CareHubSharePage.tsx"
 
+
+# ---------------------------------------------------------------------------
+# CareHub: more relative date filters (this/last/next month, this year,
+# past/next 7 and 30 days). New "starts" conditions use negative numbers and
+# new "ends" conditions use 100+, so the stock start/end checks keep working.
+# Also: the AI chat no longer offers image output (not available here).
+# ---------------------------------------------------------------------------
+CAREHUB_REL_ENUM = """  DateEndsNextWeek = 27,
+  // CareHub relative ranges (starts are negative, ends are 100+).
+  DateStartsThisMonth = -1,
+  DateStartsLastMonth = -2,
+  DateStartsNextMonth = -3,
+  DateStartsThisYear = -4,
+  DateStartsPast7Days = -5,
+  DateStartsNext7Days = -6,
+  DateStartsPast30Days = -7,
+  DateStartsNext30Days = -8,
+  DateEndsThisMonth = 101,
+  DateEndsLastMonth = 102,
+  DateEndsNextMonth = 103,
+  DateEndsThisYear = 104,
+  DateEndsPast7Days = 105,
+  DateEndsNext7Days = 106,
+  DateEndsPast30Days = 107,
+  DateEndsNext30Days = 108,
+}
+"""
+
+CAREHUB_REL_KINDS = """  NextWeek = 'nextWeek',
+  ThisMonth = 'thisMonth',
+  LastMonth = 'lastMonth',
+  NextMonth = 'nextMonth',
+  ThisYear = 'thisYear',
+  Past7Days = 'past7Days',
+  Next7Days = 'next7Days',
+  Past30Days = 'past30Days',
+  Next30Days = 'next30Days',
+}
+"""
+
+CAREHUB_REL_CASES = """      return DateFilterRelativeCondition.NextWeek;
+    case DateFilterCondition.DateStartsThisMonth:
+    case DateFilterCondition.DateEndsThisMonth:
+      return DateFilterRelativeCondition.ThisMonth;
+    case DateFilterCondition.DateStartsLastMonth:
+    case DateFilterCondition.DateEndsLastMonth:
+      return DateFilterRelativeCondition.LastMonth;
+    case DateFilterCondition.DateStartsNextMonth:
+    case DateFilterCondition.DateEndsNextMonth:
+      return DateFilterRelativeCondition.NextMonth;
+    case DateFilterCondition.DateStartsThisYear:
+    case DateFilterCondition.DateEndsThisYear:
+      return DateFilterRelativeCondition.ThisYear;
+    case DateFilterCondition.DateStartsPast7Days:
+    case DateFilterCondition.DateEndsPast7Days:
+      return DateFilterRelativeCondition.Past7Days;
+    case DateFilterCondition.DateStartsNext7Days:
+    case DateFilterCondition.DateEndsNext7Days:
+      return DateFilterRelativeCondition.Next7Days;
+    case DateFilterCondition.DateStartsPast30Days:
+    case DateFilterCondition.DateEndsPast30Days:
+      return DateFilterRelativeCondition.Past30Days;
+    case DateFilterCondition.DateStartsNext30Days:
+    case DateFilterCondition.DateEndsNext30Days:
+      return DateFilterRelativeCondition.Next30Days;
+"""
+
+CAREHUB_REL_PAIRS = """  [DateFilterCondition.DateStartsNextWeek, DateFilterCondition.DateEndsNextWeek],
+  [DateFilterCondition.DateStartsThisMonth, DateFilterCondition.DateEndsThisMonth],
+  [DateFilterCondition.DateStartsLastMonth, DateFilterCondition.DateEndsLastMonth],
+  [DateFilterCondition.DateStartsNextMonth, DateFilterCondition.DateEndsNextMonth],
+  [DateFilterCondition.DateStartsThisYear, DateFilterCondition.DateEndsThisYear],
+  [DateFilterCondition.DateStartsPast7Days, DateFilterCondition.DateEndsPast7Days],
+  [DateFilterCondition.DateStartsNext7Days, DateFilterCondition.DateEndsNext7Days],
+  [DateFilterCondition.DateStartsPast30Days, DateFilterCondition.DateEndsPast30Days],
+  [DateFilterCondition.DateStartsNext30Days, DateFilterCondition.DateEndsNext30Days],
+];
+
+// CareHub: the extra relative ranges, in menu order, with their labels.
+export const CAREHUB_RELATIVE_OPTIONS: ReadonlyArray<{ value: DateFilterCondition; label: string }> = [
+  { value: DateFilterCondition.DateStartsThisMonth, label: 'This month' },
+  { value: DateFilterCondition.DateStartsLastMonth, label: 'Last month' },
+  { value: DateFilterCondition.DateStartsNextMonth, label: 'Next month' },
+  { value: DateFilterCondition.DateStartsThisYear, label: 'This year' },
+  { value: DateFilterCondition.DateStartsPast7Days, label: 'Past 7 days' },
+  { value: DateFilterCondition.DateStartsNext7Days, label: 'Next 7 days' },
+  { value: DateFilterCondition.DateStartsPast30Days, label: 'Past 30 days' },
+  { value: DateFilterCondition.DateStartsNext30Days, label: 'Next 30 days' },
+];
+
+export function carehubRelativeLabel(condition: DateFilterCondition): string {
+  const start = toStartDateCondition(condition);
+
+  return CAREHUB_RELATIVE_OPTIONS.find((option) => option.value === start)?.label ?? '';
+}
+"""
+
+CAREHUB_REL_RANGES = """    case DateFilterRelativeCondition.NextWeek:
+      return weekRange(startOfToday, 7);
+    case DateFilterRelativeCondition.ThisMonth:
+      return { start: startOfToday.startOf('month'), end: startOfToday.endOf('month').startOf('day') };
+    case DateFilterRelativeCondition.LastMonth: {
+      const month = startOfToday.subtract(1, 'month');
+
+      return { start: month.startOf('month'), end: month.endOf('month').startOf('day') };
+    }
+
+    case DateFilterRelativeCondition.NextMonth: {
+      const month = startOfToday.add(1, 'month');
+
+      return { start: month.startOf('month'), end: month.endOf('month').startOf('day') };
+    }
+
+    case DateFilterRelativeCondition.ThisYear:
+      return { start: startOfToday.startOf('year'), end: startOfToday.endOf('year').startOf('day') };
+    case DateFilterRelativeCondition.Past7Days:
+      return { start: startOfToday.subtract(6, 'day'), end: startOfToday };
+    case DateFilterRelativeCondition.Next7Days:
+      return { start: startOfToday, end: startOfToday.add(6, 'day') };
+    case DateFilterRelativeCondition.Past30Days:
+      return { start: startOfToday.subtract(29, 'day'), end: startOfToday };
+    case DateFilterRelativeCondition.Next30Days:
+      return { start: startOfToday, end: startOfToday.add(29, 'day') };
+"""
+
+EDITS.update({
+    "src/application/database-yjs/fields/date/date.type.ts": [
+        ("  DateEndsNextWeek = 27,\n}\n", CAREHUB_REL_ENUM, 1),
+        ("  NextWeek = 'nextWeek',\n}\n", CAREHUB_REL_KINDS, 1),
+    ],
+    "src/application/database-yjs/fields/date/relativeDate.ts": [
+        ("      return DateFilterRelativeCondition.NextWeek;\n", CAREHUB_REL_CASES, 1),
+        ("  [DateFilterCondition.DateStartsNextWeek, DateFilterCondition.DateEndsNextWeek],\n];\n", CAREHUB_REL_PAIRS, 1),
+        ("    case DateFilterRelativeCondition.NextWeek:\n      return weekRange(startOfToday, 7);\n", CAREHUB_REL_RANGES, 1),
+    ],
+    "src/components/database/components/filters/filter-menu/DateTimeFilterMenu.tsx": [
+        ("import { useUpdateFilter } from '@/application/database-yjs/dispatch';\n",
+         "import { useUpdateFilter } from '@/application/database-yjs/dispatch';\n"
+         "import { CAREHUB_RELATIVE_OPTIONS } from '@/application/database-yjs/fields/date/relativeDate';\n", 1),
+        ("      { value: pick(DateFilterCondition.DateStartsNextWeek), text: t('relativeDates.nextWeek') },\n",
+         "      { value: pick(DateFilterCondition.DateStartsNextWeek), text: t('relativeDates.nextWeek') },\n"
+         "      ...CAREHUB_RELATIVE_OPTIONS.map((option) => ({ value: pick(option.value), text: option.label })),\n", 1),
+    ],
+    "src/components/database/components/filters/advanced/FilterControls.tsx": [
+        ("import { isRelativeDateCondition } from '@/application/database-yjs/fields/date/relativeDate';\n",
+         "import {\n  CAREHUB_RELATIVE_OPTIONS,\n  isRelativeDateCondition,\n  toEndDateCondition,\n"
+         "} from '@/application/database-yjs/fields/date/relativeDate';\n", 1),
+        ("    ? baseConditions.map((item) => ({ ...item, value: item.value >= 16 ? item.value + 6 : item.value + 8 }))\n",
+         "    ? baseConditions.map((item) => ({ ...item, value: toEndDateCondition(item.value) }))\n", 1),
+        ("        { value: DateFilterCondition.DateStartsNextWeek, text: t('relativeDates.nextWeek') },\n",
+         "        { value: DateFilterCondition.DateStartsNextWeek, text: t('relativeDates.nextWeek') },\n"
+         "        ...CAREHUB_RELATIVE_OPTIONS.map((option) => ({ value: option.value as number, text: option.label })),\n", 1),
+    ],
+    "src/components/database/components/filters/overview/useFilterChipLabel.ts": [
+        ("import { toStartDateCondition } from '@/application/database-yjs/fields/date/relativeDate';\n",
+         "import { carehubRelativeLabel, toStartDateCondition } from '@/application/database-yjs/fields/date/relativeDate';\n", 1),
+        ("  const format = (unix: number) => dayjs.unix(unix).format(dateFormat);\n",
+         "  const format = (unix: number) => dayjs.unix(unix).format(dateFormat);\n"
+         "  const carehubLabel = carehubRelativeLabel(filter.condition);\n\n"
+         "  if (carehubLabel) return { description: carehubLabel, hasContent: true };\n", 1),
+    ],
+    "src/components/chat/components/ui/format-group.tsx": [
+        ("        {renderGroup(actions, false)}\n",
+         "        {/* CareHub: image output is not available, so only Text is offered. */}\n"
+         "        {renderGroup(actions.filter((action) => action.key === OutputContent.TEXT), false)}\n", 1),
+    ],
+})
+
 if __name__ == "__main__":
     sys.exit(main())
 
