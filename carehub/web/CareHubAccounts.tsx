@@ -18,6 +18,31 @@ export interface CareHubAccount {
   has_signed_in?: boolean;
   in_workspace?: boolean;
   joins_workspace?: boolean;
+  /** Name and picture from the person's own profile settings. */
+  name?: string;
+  avatar?: string;
+}
+
+function AccountAvatar({ account }: { account: CareHubAccount }) {
+  const [broken, setBroken] = useState(false);
+  const avatar = (account.avatar || '').trim();
+  const label = (account.name || account.email || '?').trim();
+  const isImage = /^(https?:|data:image|\/)/i.test(avatar);
+  const base = 'flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-fill-content-hover text-sm font-medium text-text-primary';
+
+  if (avatar && isImage && !broken) {
+    return (
+      <div className={base}>
+        <img src={avatar} alt='' className='h-full w-full object-cover' onError={() => setBroken(true)} />
+      </div>
+    );
+  }
+
+  if (avatar && !isImage && avatar.length <= 16) {
+    return <div className={`${base} text-lg`}>{avatar}</div>;
+  }
+
+  return <div className={base}>{label.charAt(0).toUpperCase()}</div>;
 }
 
 const BASE = '/api/carehub/admin';
@@ -149,15 +174,17 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
     }
   };
 
+  const name = (account.name || '').trim();
+  const displayName = name && name.toLowerCase() !== (account.email || '').toLowerCase() ? name : '';
+
   return (
     <div className='border-b border-border-primary px-4 py-3 last:border-b-0' data-testid='carehub-account-row'>
       <div className='flex items-center gap-4'>
-        <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fill-content-hover text-sm font-medium text-text-primary'>
-          {(account.email || '?').charAt(0).toUpperCase()}
-        </div>
+        <AccountAvatar account={account} />
         <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 flex-wrap items-center gap-2'>
-            <span className='truncate text-sm font-medium text-text-primary'>{account.email}</span>
+            <span className='truncate text-sm font-medium text-text-primary'>{displayName || account.email}</span>
+            {displayName && <span className='truncate text-xs text-text-caption'>{account.email}</span>}
             {isMe ? (
               <span className='shrink-0 rounded-full bg-fill-content-hover px-2 py-0.5 text-xs text-text-caption'>You</span>
             ) : account.in_workspace ? (
