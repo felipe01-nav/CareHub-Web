@@ -198,24 +198,26 @@ function AccountRow({ account, workspaceId, isMe, onChanged, onError }: {
           </div>
         </div>
       </div>
-      {mode === 'idle' && !isMe && (
+      {mode === 'idle' && (
           <div className='mt-2 flex flex-wrap gap-2 pl-12'>
-            {workspaceId && !account.in_workspace && !account.joins_workspace && (
+            {!isMe && workspaceId && !account.in_workspace && !account.joins_workspace && (
               <Button variant='outline' size='sm' loading={busy} onClick={() => void setMembership(true)}>
                 Add to workspace
               </Button>
             )}
-            {workspaceId && (account.in_workspace || account.joins_workspace) && (
+            {!isMe && workspaceId && (account.in_workspace || account.joins_workspace) && (
               <Button variant='ghost' size='sm' loading={busy} onClick={() => void setMembership(false)}>
                 Take out
               </Button>
             )}
             <Button variant='outline' size='sm' onClick={() => setMode('password')}>
-              Set password
+              {isMe ? 'Change my password' : 'Set password'}
             </Button>
-            <Button variant='ghost' size='sm' danger onClick={() => setMode('remove')}>
-              Remove
-            </Button>
+            {!isMe && (
+              <Button variant='ghost' size='sm' danger onClick={() => setMode('remove')}>
+                Remove
+              </Button>
+            )}
           </div>
         )}
       {mode === 'password' && (
