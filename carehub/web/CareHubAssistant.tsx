@@ -24,6 +24,9 @@ import {
   X,
 } from 'lucide-react';
 
+import * as Y from 'yjs';
+
+import { getPageCollab } from '@/application/services/js-services/http/collab-api';
 import { executeAPIRequest, getAxios } from '@/application/services/js-services/http/core';
 import { getTokenParsed } from '@/application/session/token';
 import { cn } from '@/lib/utils';
@@ -37,6 +40,10 @@ const FLOAT_H = 600;
 const SIDE_MIN = 340;
 const SIDE_MAX = 760;
 const MAX_PAGE_CHARS = 60000;
+const SEARCH_ALL_KEY = 'carehub-assistant-search-all';
+const MAX_WORKSPACE_CHARS = 80000;
+const MAX_SEARCH_PAGES = 80;
+const MAX_CHARS_PER_PAGE = 6000;
 
 type Mode = 'float' | 'side' | 'full';
 
@@ -156,6 +163,324 @@ function errorText(err: unknown) {
   return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
 }
 
+// ---------------------------------------------------------------------------
+// Search all pages: the browser reads the pages this person can open, finds
+// the parts that match the question, and sends only those parts to Claude.
+// ---------------------------------------------------------------------------
+
+interface OutlineView {
+  view_id: string;
+  name?: string;
+  layout?: number;
+  is_space?: boolean;
+  last_edited_time?: string;
+  children?: OutlineView[];
+}
+
+interface FoundPage {
+  id: string;
+  name: string;
+  layout: number;
+  edited: string;
+  path: string[];
+}
+
+const STOP_WORDS = new Set(
+  'the and for are but not you all any can had her was one our out has his how its may new now see two who did get him let say she too use what when where which while with this that from have they will your about into than then them there these those would could should their been were what does just also some more most such only over very much many like make made want need tell show find give please here page pages note notes'.split(
+    ' '
+  )
+);
+
+function workspaceIdFrom(pathname: string) {
+  const parts = pathname.split('/').filter(Boolean);
+
+  return parts[0] === 'app' && parts[1] && /^[0-9a-f-]{36}$/i.test(parts[1]) ? parts[1] : '';
+}
+
+function searchTerms(question: string) {
+  const words = question
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => (w.length >= 3 || /^\d+$/.test(w)) && !STOP_WORDS.has(w));
+
+  return Array.from(new Set(words)).slice(0, 20);
+}
+
+function plain(text: string) {
+  return text
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function hits(text: string, terms: string[]) {
+  if (!terms.length) return 0;
+  const t = plain(text);
+  let n = 0;
+
+  for (const term of terms) {
+    if (t.includes(term)) n += 1;
+  }
+
+  return n;
+}
+
+function flattenOutline(root: OutlineView | null | undefined) {
+  const out: FoundPage[] = [];
+  const walk = (node: OutlineView, path: string[], depth: number) => {
+    if (depth > 12 || out.length > 3000) return;
+    const name = (node.name || '').trim() || 'Untitled';
+
+    if (depth > 0 && !node.is_space) {
+      out.push({
+        id: node.view_id,
+        name,
+        layout: typeof node.layout === 'number' ? node.layout : 0,
+        edited: node.last_edited_time || '',
+        path,
+      });
+    }
+
+    const next = depth > 0 ? [...path, name] : path;
+
+    (node.children || []).forEach((child) => walk(child, next, depth + 1));
+  };
+
+  if (root) walk(root, [], 0);
+  return out;
+}
+
+type BlockMap = Y.Map<unknown>;
+
+function deltaText(text: unknown) {
+  const t = text as Y.Text | undefined;
+
+  if (!t || typeof (t as Y.Text).toDelta !== 'function') return '';
+  try {
+    const ops = t.toDelta() as Array<{ insert?: unknown; attributes?: Record<string, unknown> }>;
+
+    return ops
+      .map((op) => {
+        if (typeof op.insert !== 'string') return '';
+        if (op.attributes && op.attributes.mention) return '';
+        return op.insert;
+      })
+      .join('');
+  } catch {
+    return t.toString();
+  }
+}
+
+/** Turns a saved Care Hub document into plain text (with simple Markdown). */
+function documentText(update: Uint8Array) {
+  const doc = new Y.Doc();
+
+  try {
+    Y.applyUpdate(doc, update);
+    const root = doc.getMap('data').get('document') as Y.Map<unknown> | undefined;
+
+    if (!root || typeof root.get !== 'function') return '';
+    const blocks = root.get('blocks') as Y.Map<BlockMap> | undefined;
+    const meta = root.get('meta') as Y.Map<unknown> | undefined;
+    const childrenMap = meta?.get('children_map') as Y.Map<Y.Array<string>> | undefined;
+    const textMap = meta?.get('text_map') as Y.Map<unknown> | undefined;
+    const pageId = root.get('page_id') as string | undefined;
+
+    if (!blocks || !pageId) return '';
+    const lines: string[] = [];
+    const seen = new Set<string>();
+    const walk = (id: string, depth: number) => {
+      if (seen.has(id) || depth > 40 || lines.length > 8000) return;
+      seen.add(id);
+      const block = blocks.get(id);
+
+      if (!block || typeof block.get !== 'function') return;
+      const ty = String(block.get('ty') || '');
+      const ext = (block.get('external_id') as string) || id;
+      let data: Record<string, unknown> = {};
+
+      try {
+        const raw = block.get('data');
+
+        data = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw as Record<string, unknown>) || {};
+      } catch {
+        data = {};
+      }
+
+      const text = deltaText(textMap?.get(ext)).trim();
+      const indent = '  '.repeat(Math.max(0, depth - 1));
+
+      if (text) {
+        let prefix = '';
+
+        if (ty === 'heading') prefix = '#'.repeat(Math.min(6, Number(data.level) || 1)) + ' ';
+        else if (ty === 'todo_list') prefix = data.checked ? '[x] ' : '[ ] ';
+        else if (ty === 'bulleted_list') prefix = '- ';
+        else if (ty === 'numbered_list') prefix = '1. ';
+        else if (ty === 'quote') prefix = '> ';
+        else if (ty === 'toggle_list') prefix = '▸ ';
+        lines.push(indent + prefix + text.replace(/\n+/g, ' '));
+      } else if (ty === 'divider') {
+        lines.push('---');
+      }
+
+      const childId = block.get('children') as string | undefined;
+      const kids = childId ? childrenMap?.get(childId) : undefined;
+
+      if (kids && typeof kids.toArray === 'function') {
+        kids.toArray().forEach((kid) => walk(String(kid), ty === 'page' ? depth : depth + 1));
+      }
+    };
+
+    walk(pageId, 0);
+    return lines.join('\n');
+  } catch {
+    return '';
+  } finally {
+    doc.destroy();
+  }
+}
+
+const pageTextCache = new Map<string, { stamp: string; text: string }>();
+
+async function readPageText(workspaceId: string, page: FoundPage) {
+  const hit = pageTextCache.get(page.id);
+
+  if (hit && hit.stamp === page.edited && page.edited) return hit.text;
+  const { data } = await getPageCollab(workspaceId, page.id);
+  const text = documentText(data);
+
+  pageTextCache.set(page.id, { stamp: page.edited, text });
+  return text;
+}
+
+/** The lines of a page that match the question, with a little context around them. */
+function excerpt(text: string, terms: string[], max: number) {
+  if (text.length <= max) return text;
+  const lines = text.split('\n');
+  const keep = new Set<number>();
+
+  lines.forEach((line, i) => {
+    if (hits(line, terms) > 0) {
+      for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 3); j++) keep.add(j);
+    }
+  });
+
+  if (keep.size === 0) return text.slice(0, max);
+  const out: string[] = [];
+  let size = 0;
+  let last = -2;
+
+  for (const i of Array.from(keep).sort((a, b) => a - b)) {
+    const line = (i !== last + 1 && out.length ? '…\n' : '') + lines[i];
+
+    if (size + line.length > max) break;
+    out.push(line);
+    size += line.length + 1;
+    last = i;
+  }
+
+  return out.join('\n');
+}
+
+function escapeAttr(s: string) {
+  return s.replace(/"/g, "'").replace(/[<>]/g, '');
+}
+
+async function gatherWorkspace(
+  workspaceId: string,
+  question: string,
+  extraText: string,
+  onProgress: (done: number, total: number) => void,
+  signal: AbortSignal
+) {
+  const outline = await call<OutlineView>('get', `/api/workspace/${workspaceId}/view/${workspaceId}?depth=10`);
+  const all = flattenOutline(outline);
+  const terms = searchTerms(question);
+  const origin = window.location.origin;
+  const url = (id: string) => `${origin}/app/${workspaceId}/${id}`;
+  const docs = all.filter((p) => p.layout === 0);
+  const byTitle = (p: FoundPage) => hits(p.name, terms) * 3;
+  const chosen = [...docs]
+    .sort((a, b) => byTitle(b) - byTitle(a) || (b.edited || '').localeCompare(a.edited || ''))
+    .slice(0, MAX_SEARCH_PAGES);
+  const texts = new Map<string, string>();
+  let done = 0;
+  let next = 0;
+
+  onProgress(0, chosen.length);
+  const worker = async () => {
+    while (next < chosen.length) {
+      if (signal.aborted) return;
+      const page = chosen[next++];
+
+      try {
+        texts.set(page.id, await readPageText(workspaceId, page));
+      } catch {
+        texts.set(page.id, '');
+      }
+
+      done += 1;
+      onProgress(done, chosen.length);
+    }
+  };
+
+  await Promise.all([0, 1, 2, 3, 4, 5].map(() => worker()));
+
+  const scored = chosen
+    .map((p) => {
+      const text = texts.get(p.id) || '';
+
+      return { page: p, text, score: byTitle(p) + hits(text, terms) * 2 + Math.min(3, (text.match(/\n/g) || []).length / 200) };
+    })
+    .filter((s) => s.text.trim() || hits(s.page.name, terms) > 0);
+  const totalChars = scored.reduce((n, s) => n + s.text.length, 0);
+  const fitsAll = totalChars + extraText.length < MAX_WORKSPACE_CHARS * 0.9;
+
+  scored.sort((a, b) => b.score - a.score || (b.page.edited || '').localeCompare(a.page.edited || ''));
+
+  const parts: string[] = [];
+  let used = extraText.length;
+  let included = 0;
+
+  if (extraText) parts.push(extraText);
+  for (const s of scored) {
+    if (!fitsAll && terms.length && s.score < 1) continue;
+    const body = fitsAll ? s.text : excerpt(s.text, terms, MAX_CHARS_PER_PAGE);
+    const where = s.page.path.length ? ` location="${escapeAttr(s.page.path.join(' / '))}"` : '';
+    const edited = s.page.edited ? ` edited="${escapeAttr(s.page.edited.slice(0, 10))}"` : '';
+    const block = `<page title="${escapeAttr(s.page.name)}" url="${url(s.page.id)}"${where}${edited}>\n${body || '(empty page)'}\n</page>`;
+
+    if (used + block.length > MAX_WORKSPACE_CHARS) continue;
+    parts.push(block);
+    used += block.length;
+    included += 1;
+  }
+
+  const others = all.filter((p) => p.layout !== 0).slice(0, 200);
+
+  if (others.length) {
+    const list = others
+      .map((p) => `- ${p.name} (${p.layout === 3 ? 'calendar' : p.layout === 2 ? 'board' : p.layout === 4 ? 'AI chat' : 'database'}): ${url(p.id)}`)
+      .join('\n');
+
+    if (used + list.length < MAX_WORKSPACE_CHARS + 8000) {
+      parts.push(`<other_pages note="Databases and other pages; their contents were not read.">\n${list}\n</other_pages>`);
+    }
+  }
+
+  return { text: parts.join('\n\n'), searched: chosen.length, included };
+}
+
+function goInternal(href: string) {
+  const path = href.slice(window.location.origin.length) || '/';
+
+  window.history.pushState({}, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
 function pageTitle() {
   const t = (document.title || '').replace(/\s*\|\s*Care Hub\s*$/, '').trim();
 
@@ -240,9 +565,26 @@ function inline(text: string, key: string): ReactNode[] {
       out.push(<s key={k}>{inline(tok.slice(2, -2), k)}</s>);
     } else if (m[7]) {
       const label = tok.slice(1, tok.indexOf(']('));
+      const href = m[8];
+      const internal = href.startsWith(`${window.location.origin}/app/`);
 
       out.push(
-        <a key={k} href={m[8]} target='_blank' rel='noreferrer' className='underline underline-offset-2'>
+        <a
+          key={k}
+          href={href}
+          target={internal ? undefined : '_blank'}
+          rel='noreferrer'
+          onClick={
+            internal
+              ? (e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                  e.preventDefault();
+                  goInternal(href);
+                }
+              : undefined
+          }
+          className='underline underline-offset-2'
+        >
           {label}
         </a>
       );
@@ -616,7 +958,7 @@ function MessageView({ msg }: { msg: Msg }) {
         </div>
         {msg.context && (
           <div className='flex items-center gap-1 text-[11px] text-text-tertiary'>
-            <FileText className='h-3 w-3' />
+            {msg.context.startsWith('All pages') ? <Search className='h-3 w-3' /> : <FileText className='h-3 w-3' />}
             <span className='max-w-[220px] truncate'>{msg.context}</span>
           </div>
         )}
@@ -692,6 +1034,21 @@ export function CareHubAssistant() {
   const [busy, setBusy] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [usePage, setUsePage] = useState(true);
+  const [searchAll, setSearchAllState] = useState(() => {
+    try {
+      return window.localStorage.getItem(SEARCH_ALL_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setSearchAll = useCallback((value: boolean) => {
+    setSearchAllState(value);
+    try {
+      window.localStorage.setItem(SEARCH_ALL_KEY, value ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, []);
   const [title, setTitle] = useState('');
   const [notice, setNotice] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -883,12 +1240,19 @@ export function CareHubAssistant() {
       const withPage = usePage && pageOpen;
       const pTitle = withPage ? pageTitle() || 'Untitled' : '';
       const pText = withPage ? pageText() : '';
+      const wsId = searchAll ? workspaceIdFrom(location.pathname) : '';
       const now = Date.now();
       const answerId = `a-${now}`;
 
       setMessages((list) => [
         ...list,
-        { id: `q-${now}`, role: 'user', body: text, context: pText ? pTitle : '', created_at: now },
+        {
+          id: `q-${now}`,
+          role: 'user',
+          body: text,
+          context: wsId ? 'All pages' : pText ? pTitle : '',
+          created_at: now,
+        },
         { id: answerId, role: 'assistant', body: '', context: '', created_at: now + 1, pending: true },
       ]);
 
@@ -911,18 +1275,50 @@ export function CareHubAssistant() {
 
         // A small request first, so an expired login gets refreshed.
         await call('get', `${API}/status`);
-        const token = getTokenParsed()?.access_token;
-        const base = (getAxios()?.defaults.baseURL || '').replace(/\/$/, '');
         const controller = new AbortController();
 
         abortRef.current = controller;
+        let sendTitle = pText ? pTitle : '';
+        let sendText = pText;
+        let scope = '';
+
+        if (wsId) {
+          const current = pText
+            ? `<page title="${escapeAttr(pTitle)}" note="This page is open on the person's screen right now.">\n${pText}\n</page>`
+            : '';
+          const found = await gatherWorkspace(
+            wsId,
+            text,
+            current,
+            (doneCount, total) => {
+              if (total > 0) update({ body: `_Reading your pages… ${doneCount} of ${total}_` });
+            },
+            controller.signal
+          );
+
+          if (controller.signal.aborted) {
+            update({ body: '' });
+            const abort = new Error('Stopped');
+
+            abort.name = 'AbortError';
+            throw abort;
+          }
+
+          update({ body: '' });
+          sendTitle = `All pages (${found.included} of ${found.searched} read)`;
+          sendText = found.text;
+          scope = 'workspace';
+        }
+
+        const token = getTokenParsed()?.access_token;
+        const base = (getAxios()?.defaults.baseURL || '').replace(/\/$/, '');
         const res = await fetch(`${base}${API}/conversations/${id}/ask`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ text, page_title: pText ? pTitle : '', page_text: pText, today: today() }),
+          body: JSON.stringify({ text, page_title: sendTitle, page_text: sendText, today: today(), scope }),
           signal: controller.signal,
         });
         const type = res.headers.get('content-type') || '';
@@ -980,7 +1376,7 @@ export function CareHubAssistant() {
         window.setTimeout(() => void loadConversations(), 5000);
       }
     },
-    [busy, usePage, pageOpen, setCurrentId, loadConversations]
+    [busy, usePage, pageOpen, searchAll, location.pathname, setCurrentId, loadConversations]
   );
 
   const stop = () => abortRef.current?.abort();
@@ -1061,6 +1457,7 @@ export function CareHubAssistant() {
   const heading = currentId ? current?.title || 'New chat' : 'New chat';
   const empty = messages.length === 0 && !loadingMessages;
   const pageChip = pageOpen && title ? title : '';
+  const canSearchAll = Boolean(workspaceIdFrom(location.pathname));
 
   const suggestions = [
     ...(pageChip
@@ -1155,11 +1552,38 @@ export function CareHubAssistant() {
               el.style.height = 'auto';
             }
           }}
-          placeholder={pageChip && usePage ? 'Ask Claude about this page, or anything…' : 'Ask Claude anything…'}
+          placeholder={
+            canSearchAll && searchAll
+              ? 'Ask Claude about anything in your pages…'
+              : pageChip && usePage
+                ? 'Ask Claude about this page, or anything…'
+                : 'Ask Claude anything…'
+          }
           className='max-h-[200px] min-h-[24px] w-full resize-none bg-transparent px-1.5 py-1 text-sm leading-6 outline-none placeholder:text-text-tertiary'
           data-testid='carehub-assistant-input'
         />
         <div className='flex items-center gap-2 pt-1'>
+          {canSearchAll && (
+            <button
+              type='button'
+              onClick={() => setSearchAll(!searchAll)}
+              title={
+                searchAll
+                  ? 'Claude searches all the pages you can open. Click to turn off.'
+                  : 'Let Claude search all the pages you can open.'
+              }
+              className={cn(
+                'flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
+                searchAll
+                  ? 'border-border-theme-thick bg-fill-theme-select text-text-primary'
+                  : 'border-dashed border-border-primary text-text-tertiary'
+              )}
+              data-testid='carehub-assistant-search-all'
+            >
+              <Search className='h-3 w-3 shrink-0' />
+              <span>All pages</span>
+            </button>
+          )}
           {pageChip ? (
             <button
               type='button'
