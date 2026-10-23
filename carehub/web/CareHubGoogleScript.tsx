@@ -208,6 +208,18 @@ export function GoogleScriptConnect({
   };
 
   const connect = async () => {
+    if (!url.trim()) {
+      setError('Paste the Web app link from Apps Script first (step 7).');
+      return;
+    }
+
+    if (key.trim().length < 16) {
+      setError(
+        "Care Hub doesn't know your script's password. In Apps Script, copy the text between the quotes on the line const CAREHUB_KEY = '…' and paste it in the Password box above."
+      );
+      return;
+    }
+
     setBusy(true);
     setError('');
     try {
@@ -248,7 +260,7 @@ export function GoogleScriptConnect({
               <Button variant='ghost' onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button loading={busy} disabled={!url.trim() || key.trim().length < 16} onClick={() => void connect()}>
+              <Button loading={busy} disabled={busy} onClick={() => void connect()}>
                 Connect
               </Button>
             </>
@@ -317,17 +329,36 @@ export function GoogleScriptConnect({
                 />
               </Step>
             </ol>
-            <details className='text-xs text-text-secondary'>
-              <summary className='cursor-pointer'>Password (filled in for you)</summary>
-              <Input
-                className='mt-1.5'
-                type='password'
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder='The CAREHUB_KEY from the script'
-              />
-              <div className='mt-1'>Only change this if you edited CAREHUB_KEY in the script yourself.</div>
-            </details>
+            {key ? (
+              <details className='text-xs text-text-secondary'>
+                <summary className='cursor-pointer'>Password (filled in for you)</summary>
+                <Input
+                  className='mt-1.5'
+                  type='password'
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder='The CAREHUB_KEY from the script'
+                />
+                <div className='mt-1'>Only change this if you edited CAREHUB_KEY in the script yourself.</div>
+              </details>
+            ) : (
+              <div className='text-xs text-text-secondary'>
+                <div className='font-medium text-text-primary'>Password</div>
+                <div className='mt-0.5'>
+                  Already pasted a script from Care Hub earlier? In Apps Script, copy the text between the quotes on the
+                  line <code>const CAREHUB_KEY = &apos;…&apos;</code> and paste it here. Otherwise click Copy the script
+                  above and it fills in by itself.
+                </div>
+                <Input
+                  className='mt-1.5'
+                  type='password'
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder='The CAREHUB_KEY from the script'
+                  data-testid='carehub-google-script-key'
+                />
+              </div>
+            )}
             <div className='text-xs text-text-tertiary'>
               If &quot;Anyone&quot; isn&apos;t offered under &quot;Who has access&quot;, your company has turned this
               off and it won&apos;t work with this account.
