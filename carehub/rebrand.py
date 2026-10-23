@@ -1297,3 +1297,15 @@ EDITS.setdefault("src/components/app/settings/Settings.tsx", []).extend([
 if __name__ == "__main__":
     sys.exit(main())
 
+
+# ---------------------------------------------------------------------------
+# CareHub: new accounts choose their own password at first sign-in.
+# ---------------------------------------------------------------------------
+EXTRA_FILES[HERE / "web" / "CareHubPasswordGate.tsx"] = "src/components/carehub/CareHubPasswordGate.tsx"
+
+EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
+    ("import CareHubBackground from '@/components/carehub/CareHubBackground';\n",
+     "import CareHubBackground from '@/components/carehub/CareHubBackground';\n"
+     "import CareHubPasswordGate from '@/components/carehub/CareHubPasswordGate';\n", 1),
+    ("    <CareHubBackground />\n", "    <CareHubBackground />\n    <CareHubPasswordGate />\n", 1),
+])
