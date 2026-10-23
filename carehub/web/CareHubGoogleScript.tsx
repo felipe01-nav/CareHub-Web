@@ -254,7 +254,7 @@ export function GoogleScriptConnect({
 
       setError(
         /do not have permission to call|required permissions/i.test(text)
-          ? "Google hasn't let the script use your calendar yet. In Apps Script, click ▶ Run at the top of the code box, then Review permissions → your account → Allow. Then click Connect again."
+          ? "Google hasn't let the script use your calendar yet. In Apps Script, click ▶ Run at the top of the code box, then Review permissions → your account → tick Select all → Continue. Then click Connect again."
           : text
       );
     } finally {
@@ -334,7 +334,8 @@ export function GoogleScriptConnect({
               </Step>
               <Step n={5}>
                 At the top of the code box, click <b>▶ Run</b>. When Google asks, click <b>Review permissions</b>, pick
-                your account and click <b>Allow</b>. This lets the script use your calendar. If you see &quot;Google
+                your account, tick <b>Select all</b> and click <b>Continue</b> (or <b>Allow</b>). This lets the script use
+                your calendar. If you see &quot;Google
                 hasn&apos;t verified this app&quot;, click <b>Advanced</b> → <b>Go to Care Hub Calendar</b> — it&apos;s your
                 own script.
               </Step>
