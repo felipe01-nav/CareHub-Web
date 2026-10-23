@@ -98,6 +98,7 @@ export type Block =
   | { id: string; type: 'embed'; url: string; height: number }
   | { id: string; type: 'accordion'; items: TextItem[] }
   | { id: string; type: 'tabs'; items: TextItem[] }
+  | { id: string; type: 'process'; items: TextItem[] }
   | { id: string; type: 'flashcards'; cards: FlashCard[] }
   | { id: string; type: 'continue'; label: string; require_complete: boolean }
   | { id: string; type: 'knowledge_check'; question: Question }
@@ -122,6 +123,7 @@ export const BLOCK_TYPES: BlockType[] = [
   'embed',
   'accordion',
   'tabs',
+  'process',
   'flashcards',
   'continue',
   'knowledge_check',
@@ -139,6 +141,8 @@ export interface CourseSettings {
   ack_text: string;
   completion: Completion;
   catalog: boolean;
+  /** People who finish get a certificate (the Certificates page lists them). */
+  certificate: boolean;
 }
 
 export interface Lesson {
@@ -522,6 +526,8 @@ export function normalizeBlock(raw: unknown): Block | null {
       return { id, type: 'accordion', items: textItems(o.items, 'i') };
     case 'tabs':
       return { id, type: 'tabs', items: textItems(o.items, 'i') };
+    case 'process':
+      return { id, type: 'process', items: textItems(o.items, 'i') };
     case 'flashcards':
       return {
         id,
@@ -598,6 +604,7 @@ export function normalizeContent(raw: unknown): Content {
       ack_text: typeof s.ack_text === 'string' ? s.ack_text : DEFAULT_ACK,
       completion: oneOf(s.completion, ['all_lessons', 'pass_quiz', 'all_lessons_and_quiz'], 'all_lessons'),
       catalog: bool(s.catalog, true),
+      certificate: bool(s.certificate),
     },
     lessons: arr(o.lessons).map(normalizeLesson),
     quiz: {
@@ -831,6 +838,7 @@ export function cloneBlock(b: Block): Block {
   switch (copy.type) {
     case 'accordion':
     case 'tabs':
+    case 'process':
       copy.items = copy.items.map((it) => ({ ...it, id: newId('i') }));
       break;
     case 'flashcards':
@@ -1046,7 +1054,7 @@ export const PRESETS: { id: Preset; emoji: string; label: string; hint: string }
   { id: 'standard', emoji: '📘', label: 'Standard course', hint: 'Lessons in any order. Done when every lesson is finished.' },
   { id: 'scenario_lab', emoji: '💬', label: 'Scenario lab', hint: 'Practice conversations and quick checks, in order.' },
   { id: 'required_read', emoji: '📜', label: 'Required read', hint: 'A policy or update people read in order and confirm.' },
-  { id: 'certification', emoji: '🏅', label: 'Certification', hint: 'Lessons in order, then a final quiz to pass (80%).' },
+  { id: 'certification', emoji: '🏅', label: 'Certification', hint: 'Lessons in order, a final quiz to pass (80%), then a certificate.' },
   { id: 'microlearning', emoji: '⚡', label: 'Microlearning', hint: 'One short lesson — a few minutes, any time.' },
 ];
 
@@ -1065,6 +1073,7 @@ export function defaultSettings(): CourseSettings {
     ack_text: DEFAULT_ACK,
     completion: 'all_lessons',
     catalog: true,
+    certificate: false,
   };
 }
 
@@ -1101,6 +1110,7 @@ export function applyPreset(c: Content, preset: Preset): Content {
       s.max_attempts = 3;
       s.completion = 'all_lessons_and_quiz';
       s.show_answers = 'after_pass';
+      s.certificate = true;
       quiz.enabled = true;
       break;
     case 'microlearning':
@@ -1160,6 +1170,16 @@ export function blankBlock(type: BlockType): Block {
         items: [
           { id: newId('i'), title: 'First', text: '' },
           { id: newId('i'), title: 'Second', text: '' },
+        ],
+      };
+    case 'process':
+      return {
+        id,
+        type,
+        items: [
+          { id: newId('i'), title: '', text: '' },
+          { id: newId('i'), title: '', text: '' },
+          { id: newId('i'), title: '', text: '' },
         ],
       };
     case 'flashcards':
@@ -1286,6 +1306,7 @@ export function estimateMinutes(c: Content) {
           break;
         case 'accordion':
         case 'tabs':
+        case 'process':
           lesson += b.items.reduce((n, it) => n + words(`${it.title} ${it.text}`), 0) * 0.3 + 5 * b.items.length;
           break;
         case 'flashcards':
@@ -1414,6 +1435,9 @@ export function validateContent(c: Content): string[] {
       }
 
       if (b.type === 'page_link' && !b.view_id) out.push(`A page link in ${name} needs a page.`);
+      if (b.type === 'process' && b.items.filter((it) => it.title.trim() || it.text.trim()).length < 2) {
+        out.push(`A process in ${name} needs at least two steps.`);
+      }
     });
   });
 

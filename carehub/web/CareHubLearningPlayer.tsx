@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -24,6 +25,7 @@ import {
   isFinished,
   isTransientError,
   lapi,
+  LEARNING_PATH,
   learningNotLive,
   lErrorText,
   plural,
@@ -790,6 +792,7 @@ function DoneView({
   onReview,
   onNext,
   onQuiz,
+  preview,
 }: {
   course: PlayCourse;
   status: LearnStatus;
@@ -808,8 +811,34 @@ function DoneView({
   onReview: () => void;
   onNext: () => void;
   onQuiz: () => void;
+  preview: boolean;
 }) {
+  const navigate = useNavigate();
   const [ticked, setTicked] = useState(false);
+  const certificatesPath = `${LEARNING_PATH}/certificates`;
+  const certificate = course.settings.certificate && (
+    <div className='chl-box-success mt-4 rounded-[12px] px-4 py-3 text-sm'>
+      <span aria-hidden='true'>🎓 </span>
+      {preview ? (
+        'People who finish get a certificate — they see a “View my certificate” link here.'
+      ) : (
+        <>
+          You’ve earned a certificate.{' '}
+          <a
+            href={certificatesPath}
+            className='font-semibold text-text-action underline underline-offset-2'
+            onClick={(e) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              navigate(certificatesPath);
+            }}
+          >
+            View my certificate
+          </a>
+        </>
+      )}
+    </div>
+  );
   const facts = (
     <div className='mt-3 flex flex-wrap gap-1.5'>
       {score !== null && course.quiz.enabled && <Chip tone={status === 'failed' ? 'red' : 'green'}>Score {score}%</Chip>}
@@ -856,6 +885,7 @@ function DoneView({
         <h1 className='mt-3 text-2xl font-semibold'>{status === 'passed' ? 'You passed!' : 'Course complete!'}</h1>
         <p className='mt-1 text-sm text-text-secondary'>Nice work finishing “{course.title.trim() || 'this course'}”.</p>
         <div className='flex justify-center'>{facts}</div>
+        {certificate}
         <div className='mt-5 flex flex-wrap justify-center gap-2'>
           {exit}
           <Button type='button' variant='ghost' onClick={onReview}>
@@ -1694,6 +1724,7 @@ function PlayerShell({
                   onReview={() => openView(lessons[0] ? { kind: 'lesson', lessonId: lessons[0].id } : { kind: 'intro' })}
                   onNext={() => openView(nextAfter(null, doneIds))}
                   onQuiz={() => openView({ kind: 'quiz' })}
+                  preview={isPreview}
                 />
               )}
             </div>

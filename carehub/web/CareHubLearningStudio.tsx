@@ -27,31 +27,36 @@ import {
   learningNotLive,
   lErrorText,
   plural,
+  presetInfo,
   PRESETS,
   starterContent,
   validateContent,
 } from './CareHubLearningApi';
 import { Chip, CourseCover } from './CareHubLearningBlocks';
-import { exampleCourse } from './CareHubLearningExample';
+import { EXAMPLES } from './CareHubLearningExample';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import {
   AddButton,
   BlockCard,
   BlockLibrary,
   CopyIcon,
+  DragGrip,
+  DropLine,
   Field,
   IconButton,
-  MEDIA_NOTE,
+  MediaField,
   NumberField,
   PicturePicker,
   QuestionEditor,
   TextBox,
   TextLine,
   Toggle,
-  UrlField,
+  UploadContext,
+  useDragSort,
 } from './CareHubLearningStudioBlocks';
 import { CareHubModal, ChNote, ChSection, ChSelect } from './CareHubUi';
 
+import type { ExampleCourse } from './CareHubLearningExample';
 import type {
   Block,
   BlockType,
@@ -291,6 +296,75 @@ function NewCourseModal({
   );
 }
 
+function ExamplePickerModal({
+  busy,
+  error,
+  onPick,
+  onClose,
+}: {
+  /** The course type of the example being created, or ''. */
+  busy: Preset | '';
+  error: string;
+  onPick: (example: ExampleCourse) => void;
+  onClose: () => void;
+}) {
+  return (
+    <CareHubModal
+      title='Start from an example'
+      wide
+      onClose={onClose}
+      testId='carehub-learning-examples'
+      footer={
+        <Button type='button' variant='ghost' onClick={onClose}>
+          Cancel
+        </Button>
+      }
+    >
+      <div className='flex flex-col gap-3'>
+        <p className='text-sm text-text-secondary'>
+          There’s one example for each kind of course. Pick one to get your own copy as a draft — change anything you like before you publish it.
+        </p>
+        <ul className='m-0 flex list-none flex-col gap-2 p-0' aria-label='Example courses'>
+          {EXAMPLES.map((ex, i) => {
+            const info = presetInfo(ex.preset);
+            const mine = busy === ex.preset;
+
+            return (
+              <li key={ex.preset}>
+                <button
+                  type='button'
+                  autoFocus={i === 0}
+                  disabled={Boolean(busy)}
+                  aria-busy={mine || undefined}
+                  onClick={() => onPick(ex)}
+                  data-testid={`carehub-learning-example-${ex.preset}`}
+                  className={cn(
+                    'flex min-h-[44px] w-full items-start gap-2.5 rounded-[10px] border px-3 py-2.5 text-left',
+                    mine ? 'border-border-theme-thick bg-fill-content-hover' : 'border-border-primary hover:bg-fill-content-hover',
+                    busy && !mine && 'opacity-60'
+                  )}
+                >
+                  <span className='text-lg leading-6' aria-hidden='true'>
+                    {info.emoji}
+                  </span>
+                  <span className='min-w-0 flex-1'>
+                    <span className='block text-sm font-medium'>{ex.title}</span>
+                    <span className='block text-xs text-text-tertiary'>
+                      {info.label} · {ex.description}
+                    </span>
+                  </span>
+                  {mine && <span className='shrink-0 text-xs text-text-secondary'>Creating…</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {error && <ChNote tone='error'>{error}</ChNote>}
+      </div>
+    </CareHubModal>
+  );
+}
+
 function StudioRowView({
   row,
   busy,
@@ -361,6 +435,8 @@ export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [newOpen, setNewOpen] = useState(false);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const [picked, setPicked] = useState<Preset | ''>('');
   const [creating, setCreating] = useState<'' | 'new' | 'example'>('');
   const [createError, setCreateError] = useState('');
   const [busyId, setBusyId] = useState('');
@@ -453,11 +529,16 @@ export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
     <div data-testid='carehub-learning-studio'>
       <div className='mb-4 flex flex-wrap items-center gap-2'>
         <div className='min-w-0 flex-1 text-sm text-text-secondary'>Build courses from blocks, preview them, then publish.</div>
-        <Button type='button' variant='outline' loading={creating === 'example'} disabled={Boolean(creating)} onClick={() => {
-          const ex = exampleCourse();
-
-          void create('example', ex.title, ex.preset, ex);
-        }}>
+        <Button
+          type='button'
+          variant='outline'
+          disabled={Boolean(creating)}
+          onClick={() => {
+            setCreateError('');
+            setExamplesOpen(true);
+          }}
+          data-testid='carehub-learning-examples-open'
+        >
           Start from an example
         </Button>
         <Button
@@ -486,7 +567,7 @@ export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
           </div>
           <div className='mt-3 text-lg font-semibold'>No courses yet</div>
           <p className='mx-auto mt-1 max-w-[440px] text-sm text-text-secondary'>
-            Create your first course, or start from the example to see every kind of block in action.
+            Create your first course, or start from an example to see how each kind of course works.
           </p>
         </div>
       ) : (
@@ -522,6 +603,19 @@ export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
             </button>
           )}
         </div>
+      )}
+      {examplesOpen && (
+        <ExamplePickerModal
+          busy={creating === 'example' ? picked : ''}
+          error={createError}
+          onClose={() => setExamplesOpen(false)}
+          onPick={(ex) => {
+            const content = ex.build();
+
+            setPicked(ex.preset);
+            void create('example', content.title, content.preset, content);
+          }}
+        />
       )}
       {newOpen && (
         <NewCourseModal
@@ -971,6 +1065,17 @@ function Editor({
   const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
   const [focusId, setFocusId] = useState('');
   const [keeping, setKeeping] = useState(false);
+  const uploadTarget = useMemo(() => ({ workspaceId, courseId }), [workspaceId, courseId]);
+  const lessonDrag = useDragSort((from, to) =>
+    update((c) => {
+      const moved = moveItem(c.lessons, from, to);
+
+      return moved === c.lessons ? c : { ...c, lessons: moved };
+    })
+  );
+  const blockDrag = useDragSort((from, to) => {
+    if (selected.kind === 'lesson') setBlocks(selected.id, (bs) => moveItem(bs, from, to));
+  });
 
   const draftRef = useRef<Content>(initial.draft);
   const baseRef = useRef(initial.updated_ms);
@@ -1389,7 +1494,7 @@ function Editor({
             />
           </Field>
         </div>
-        <div className='flex flex-col gap-3'>
+        <div ref={blockDrag.setList} className='flex flex-col gap-3'>
           {lesson.blocks.length === 0 ? (
             <div className='rounded-[12px] border border-dashed border-border-primary px-4 py-8 text-center text-sm text-text-secondary'>
               <div>This lesson is empty. Add text, pictures, videos, quick checks and more.</div>
@@ -1422,6 +1527,9 @@ function Editor({
                 }}
                 onDelete={() => deleteBlock(lesson.id, b.id)}
                 onAddBelow={() => setModal({ kind: 'library', lessonId: lesson.id, index: i + 1 })}
+                onGrab={blockDrag.grab(i)}
+                dragging={blockDrag.drag?.from === i}
+                dropEdge={blockDrag.edgeOf(i)}
               />
             ))
           )}
@@ -1552,12 +1660,12 @@ function Editor({
                 <CourseCover cover={draft.cover} preset={draft.preset} seed={courseId} />
               </div>
               <div className='flex min-w-0 flex-1 flex-col gap-2'>
-                <UrlField
-                  label='Cover picture (link)'
+                <MediaField
+                  kind='image'
+                  label='Cover picture'
                   value={draft.cover}
                   onChange={(v) => update((c) => ({ ...c, cover: v }))}
-                  placeholder='https://…'
-                  hint={MEDIA_NOTE}
+                  hint='Upload a picture (up to 10 MB) or paste a link.'
                 />
                 <PicturePicker value={draft.cover} onPick={(url) => update((c) => ({ ...c, cover: url }))} />
                 {draft.cover && (
@@ -1625,6 +1733,12 @@ function Editor({
                 <TextLine value={s.ack_text} onChange={(v) => setSettings({ ack_text: v })} placeholder={DEFAULT_ACK} maxLength={300} />
               </Field>
             )}
+            <Toggle
+              checked={s.certificate}
+              onChange={(v) => setSettings({ certificate: v })}
+              label='Give a certificate when someone finishes'
+              hint='When they finish, they see a “View my certificate” link. Certificates are listed on the Certificates page.'
+            />
           </div>
         </ChSection>
         <ChSection title='Who can find it'>
@@ -1641,7 +1755,9 @@ function Editor({
                 {everPublished ? 'Anyone in the workspace with the link can take it.' : 'The link works once you publish.'}
               </span>
             </div>
-            <div className='text-xs text-text-tertiary'>Assigning courses to people with due dates is coming soon.</div>
+            <div className='text-xs text-text-tertiary'>
+              To give this course to people with a due date, use the Assign tab (needs the “Assign courses” permission).
+            </div>
           </div>
         </ChSection>
       </div>
@@ -1684,6 +1800,7 @@ function Editor({
 
   const outline = (
     <nav
+      ref={lessonDrag.setList}
       aria-label='Course outline'
       className='sticky top-4 flex max-h-[calc(100vh-120px)] flex-col gap-0.5 overflow-y-auto rounded-[12px] border border-border-primary p-2'
     >
@@ -1695,13 +1812,20 @@ function Editor({
         return (
           <div
             key={l.id}
-            className={cn('group flex items-center rounded-[8px]', active ? 'bg-fill-content-hover' : 'hover:bg-fill-content-hover')}
+            data-drag-item=''
+            className={cn(
+              'group relative flex items-center rounded-[8px]',
+              active ? 'bg-fill-content-hover' : 'hover:bg-fill-content-hover',
+              lessonDrag.drag?.from === i && 'opacity-50'
+            )}
           >
+            <DropLine edge={lessonDrag.edgeOf(i)} gap={2} />
+            <DragGrip onPointerDown={lessonDrag.grab(i)} className='opacity-60 group-hover:opacity-100' />
             <button
               type='button'
               aria-current={active ? 'true' : undefined}
               onClick={() => setSelected({ kind: 'lesson', id: l.id })}
-              className={cn('flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm', active ? 'font-medium' : 'text-text-secondary')}
+              className={cn('flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-0.5 pr-2 text-left text-sm', active ? 'font-medium' : 'text-text-secondary')}
               data-testid='carehub-learning-outline-lesson'
             >
               <span className='w-5 shrink-0 text-xs font-normal text-text-tertiary'>{i + 1}.</span>
@@ -1759,149 +1883,151 @@ function Editor({
   );
 
   return (
-    <div ref={rootRef} className='flex flex-col gap-4' data-testid='carehub-learning-editor'>
-      <div className='flex flex-col gap-2'>
-        <div className='flex items-center gap-2'>
-          <BackToStudio onClick={() => navigate(STUDIO_PATH)} />
-          <span
-            role='status'
-            aria-live='polite'
-            title={saveError || undefined}
-            className={cn('ml-auto text-xs', save === 'retrying' || problem ? 'text-text-error' : 'text-text-tertiary')}
-            data-testid='carehub-learning-save-status'
-          >
-            {statusText}
-          </span>
-        </div>
-        <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
-          <h1 className='min-w-0 max-w-full break-words text-xl font-semibold'>{draft.title.trim() || 'Untitled course'}</h1>
-          <StatusChips status={meta.status} version={meta.published_version} unpublished={meta.has_unpublished_changes} />
-          <div className='flex flex-wrap gap-1.5 sm:ml-auto'>
-            <Button type='button' size='sm' variant='outline' onClick={() => openPreview()} data-testid='carehub-learning-preview-button'>
-              👁 Preview
-            </Button>
-            <Button type='button' size='sm' variant='outline' onClick={() => setModal({ kind: 'versions' })}>
-              {meta.versions.length ? `Versions (${meta.versions.length})` : 'Versions'}
-            </Button>
-            <Button
-              type='button'
-              size='sm'
-              disabled={nothingNew}
-              title={nothingNew ? 'Nothing new to publish' : undefined}
-              onClick={() => setModal({ kind: 'publish' })}
-              data-testid='carehub-learning-publish'
+    <UploadContext.Provider value={uploadTarget}>
+      <div ref={rootRef} className='flex flex-col gap-4' data-testid='carehub-learning-editor'>
+        <div className='flex flex-col gap-2'>
+          <div className='flex items-center gap-2'>
+            <BackToStudio onClick={() => navigate(STUDIO_PATH)} />
+            <span
+              role='status'
+              aria-live='polite'
+              title={saveError || undefined}
+              className={cn('ml-auto text-xs', save === 'retrying' || problem ? 'text-text-error' : 'text-text-tertiary')}
+              data-testid='carehub-learning-save-status'
             >
-              {everPublished ? 'Publish changes' : 'Publish'}
-            </Button>
+              {statusText}
+            </span>
           </div>
-        </div>
-      </div>
-
-      {meta.status === 'archived' && (
-        <ChNote>This course is archived, so nobody can start it. Unarchive it from the Studio list to bring it back.</ChNote>
-      )}
-      {problem === 'stale' && (
-        <ChNote tone='warn'>
-          <div className='flex flex-col gap-2'>
-            <span>Someone else saved this course a moment ago. Reload to see their changes. Your latest edits here aren’t saved.</span>
-            <div className='flex flex-wrap gap-2'>
-              <Button type='button' size='sm' onClick={onReload}>
-                Reload their version
+          <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
+            <h1 className='min-w-0 max-w-full break-words text-xl font-semibold'>{draft.title.trim() || 'Untitled course'}</h1>
+            <StatusChips status={meta.status} version={meta.published_version} unpublished={meta.has_unpublished_changes} />
+            <div className='flex flex-wrap gap-1.5 sm:ml-auto'>
+              <Button type='button' size='sm' variant='outline' onClick={() => openPreview()} data-testid='carehub-learning-preview-button'>
+                👁 Preview
               </Button>
-              <Button type='button' size='sm' variant='outline' loading={keeping} onClick={() => void keepMine()}>
-                Keep mine (replace theirs)
+              <Button type='button' size='sm' variant='outline' onClick={() => setModal({ kind: 'versions' })}>
+                {meta.versions.length ? `Versions (${meta.versions.length})` : 'Versions'}
+              </Button>
+              <Button
+                type='button'
+                size='sm'
+                disabled={nothingNew}
+                title={nothingNew ? 'Nothing new to publish' : undefined}
+                onClick={() => setModal({ kind: 'publish' })}
+                data-testid='carehub-learning-publish'
+              >
+                {everPublished ? 'Publish changes' : 'Publish'}
               </Button>
             </div>
           </div>
-        </ChNote>
-      )}
-      {problem === 'too_big' && <ChNote tone='error'>{saveError || TOO_BIG_TEXT}</ChNote>}
-      {problem === 'error' && (
-        <ChNote tone='error'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <span className='min-w-0 flex-1'>Your latest changes aren’t saved. {saveError}</span>
-            <Button type='button' size='sm' variant='outline' onClick={() => void runSave()}>
-              Try again
-            </Button>
-          </div>
-        </ChNote>
-      )}
-
-      <div className={cn(narrow ? 'flex flex-col gap-4' : 'grid grid-cols-[250px_minmax(0,1fr)] items-start gap-6')}>
-        {narrow ? picker : outline}
-        <div className='min-w-0'>{panel}</div>
-      </div>
-
-      {undo && (
-        <div
-          role='status'
-          className='fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-[10px] bg-[#1f2329] px-4 py-2 text-sm text-white shadow-lg'
-        >
-          <span className='min-w-0'>{undo.label}</span>
-          <button
-            type='button'
-            className='font-semibold text-[#8ccaff] hover:underline'
-            onClick={() => {
-              undo.restore();
-              setUndo(null);
-            }}
-          >
-            Undo
-          </button>
-          <button type='button' aria-label='Dismiss' className='opacity-70 hover:opacity-100' onClick={() => setUndo(null)}>
-            ×
-          </button>
         </div>
-      )}
 
-      {modal?.kind === 'library' && (
-        <BlockLibrary onPick={(t) => addBlock(modal.lessonId, modal.index, t)} onClose={() => setModal(null)} />
-      )}
-      {modal?.kind === 'preview' && (
-        <PreviewModal
-          workspaceId={workspaceId}
-          courseId={courseId}
-          content={modal.content}
-          startLessonId={modal.startLessonId}
-          label={modal.label}
-          onClose={() => setModal(modal.back === 'versions' ? { kind: 'versions' } : null)}
-        />
-      )}
-      {modal?.kind === 'publish' && (
-        <PublishModal
-          courseId={courseId}
-          draft={draft}
-          everPublished={everPublished}
-          learnersStarted={everPublished}
-          onPublish={publish}
-          onClose={() => setModal(null)}
-        />
-      )}
-      {modal?.kind === 'versions' && (
-        <VersionsModal
-          workspaceId={workspaceId}
-          courseId={courseId}
-          versions={meta.versions}
-          onPreview={(content, label) => setModal({ kind: 'preview', content, label, back: 'versions' })}
-          beforeRestore={beforeRestore}
-          onRestored={onReload}
-          onClose={() => setModal(null)}
-        />
-      )}
-      {deleting && (
-        <ConfirmModal
-          title='Delete this lesson?'
-          confirmLabel='Delete lesson'
-          danger
-          onConfirm={() => deleteLesson(deleting.id)}
-          onClose={() => setModal(null)}
-        >
-          <p>
-            “{lessonName(deleting, lessons.indexOf(deleting))}” and its {plural(deleting.blocks.length, 'block')} will be removed from the
-            draft. Learners keep the published version until you publish again.
-          </p>
-        </ConfirmModal>
-      )}
-    </div>
+        {meta.status === 'archived' && (
+          <ChNote>This course is archived, so nobody can start it. Unarchive it from the Studio list to bring it back.</ChNote>
+        )}
+        {problem === 'stale' && (
+          <ChNote tone='warn'>
+            <div className='flex flex-col gap-2'>
+              <span>Someone else saved this course a moment ago. Reload to see their changes. Your latest edits here aren’t saved.</span>
+              <div className='flex flex-wrap gap-2'>
+                <Button type='button' size='sm' onClick={onReload}>
+                  Reload their version
+                </Button>
+                <Button type='button' size='sm' variant='outline' loading={keeping} onClick={() => void keepMine()}>
+                  Keep mine (replace theirs)
+                </Button>
+              </div>
+            </div>
+          </ChNote>
+        )}
+        {problem === 'too_big' && <ChNote tone='error'>{saveError || TOO_BIG_TEXT}</ChNote>}
+        {problem === 'error' && (
+          <ChNote tone='error'>
+            <div className='flex flex-wrap items-center gap-2'>
+              <span className='min-w-0 flex-1'>Your latest changes aren’t saved. {saveError}</span>
+              <Button type='button' size='sm' variant='outline' onClick={() => void runSave()}>
+                Try again
+              </Button>
+            </div>
+          </ChNote>
+        )}
+
+        <div className={cn(narrow ? 'flex flex-col gap-4' : 'grid grid-cols-[250px_minmax(0,1fr)] items-start gap-6')}>
+          {narrow ? picker : outline}
+          <div className='min-w-0'>{panel}</div>
+        </div>
+
+        {undo && (
+          <div
+            role='status'
+            className='fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-[10px] bg-[#1f2329] px-4 py-2 text-sm text-white shadow-lg'
+          >
+            <span className='min-w-0'>{undo.label}</span>
+            <button
+              type='button'
+              className='font-semibold text-[#8ccaff] hover:underline'
+              onClick={() => {
+                undo.restore();
+                setUndo(null);
+              }}
+            >
+              Undo
+            </button>
+            <button type='button' aria-label='Dismiss' className='opacity-70 hover:opacity-100' onClick={() => setUndo(null)}>
+              ×
+            </button>
+          </div>
+        )}
+
+        {modal?.kind === 'library' && (
+          <BlockLibrary onPick={(t) => addBlock(modal.lessonId, modal.index, t)} onClose={() => setModal(null)} />
+        )}
+        {modal?.kind === 'preview' && (
+          <PreviewModal
+            workspaceId={workspaceId}
+            courseId={courseId}
+            content={modal.content}
+            startLessonId={modal.startLessonId}
+            label={modal.label}
+            onClose={() => setModal(modal.back === 'versions' ? { kind: 'versions' } : null)}
+          />
+        )}
+        {modal?.kind === 'publish' && (
+          <PublishModal
+            courseId={courseId}
+            draft={draft}
+            everPublished={everPublished}
+            learnersStarted={everPublished}
+            onPublish={publish}
+            onClose={() => setModal(null)}
+          />
+        )}
+        {modal?.kind === 'versions' && (
+          <VersionsModal
+            workspaceId={workspaceId}
+            courseId={courseId}
+            versions={meta.versions}
+            onPreview={(content, label) => setModal({ kind: 'preview', content, label, back: 'versions' })}
+            beforeRestore={beforeRestore}
+            onRestored={onReload}
+            onClose={() => setModal(null)}
+          />
+        )}
+        {deleting && (
+          <ConfirmModal
+            title='Delete this lesson?'
+            confirmLabel='Delete lesson'
+            danger
+            onConfirm={() => deleteLesson(deleting.id)}
+            onClose={() => setModal(null)}
+          >
+            <p>
+              “{lessonName(deleting, lessons.indexOf(deleting))}” and its {plural(deleting.blocks.length, 'block')} will be removed from the
+              draft. Learners keep the published version until you publish again.
+            </p>
+          </ConfirmModal>
+        )}
+      </div>
+    </UploadContext.Provider>
   );
 }
