@@ -96,7 +96,7 @@ export const CAREHUB_PERMS: { id: CareHubPerm; label: string; hint: string }[] =
   { id: 'analytics', label: 'See analytics', hint: 'Who viewed and edited what' },
   { id: 'automations', label: 'Manage automations', hint: 'Scheduled and automatic messages' },
   { id: 'learning_build', label: 'Build courses', hint: 'Create, edit and publish courses, and see their reports' },
-  { id: 'learning_assign', label: 'Assign courses (coming soon)', hint: 'Assign courses with due dates (next phase)' },
+  { id: 'learning_assign', label: 'Assign courses', hint: 'Assign courses to people, roles or groups with due dates' },
   { id: 'learning_analytics', label: 'See course reports', hint: 'Read-only course and people reports, CSV export' },
   { id: 'admin', label: 'Admin', hint: 'Roles, data & backups, everything above' },
 ];
