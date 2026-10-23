@@ -1,7 +1,7 @@
-// CareHub Learning: course reports. Who has started, finished or not yet opened each course, where people stop,
-// how the quiz questions (and the answers people pick) and knowledge checks are going, and the same view per
-// person, with CSV export. Open to people with the "See course reports" or "Build courses" permission; only
-// people who can build courses can reset someone's progress.
+// CareHub Learning: course reports. Who has started, finished or not yet opened each course, who is overdue,
+// where people stop, how the quiz questions (and the answers people pick) and knowledge checks are going, the
+// same view per person and per group (Teams), with CSV export. Open to people with the "See course reports" or
+// "Build courses" permission; only people who can build courses can reset someone's progress.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ReactNode } from 'react';
@@ -12,6 +12,9 @@ import { cn } from '@/lib/utils';
 
 import { chCall, CH_API, formatWhen, UUID_RE } from './CareHubCore';
 import { formatDuration, isTransientError, LEARNING_PATH, learningNotLive, lErrorText, num, plural, statusInfo, str } from './CareHubLearningApi';
+// CareHubLearningAssignApi also imports reportsApi from this file. That's fine: each side only uses the other
+// inside functions, never while the files are first loaded.
+import { assignCoursePath, certificatePath, groupPath, shortDate } from './CareHubLearningAssignApi';
 import { Chip, ProgressBar, RichText } from './CareHubLearningBlocks';
 import { CareHubModal, ChCard, chInputClass, ChNote, ChSection } from './CareHubUi';
 
@@ -19,6 +22,7 @@ import type { LearnStatus } from './CareHubLearningApi';
 
 export const REPORTS_PATH = `${LEARNING_PATH}/reports`;
 export const PEOPLE_PATH = `${REPORTS_PATH}/people`;
+export const TEAMS_PATH = `${REPORTS_PATH}/teams`;
 
 const STUDIO_PATH = `${LEARNING_PATH}/studio`;
 const coursePath = (id: string) => `${REPORTS_PATH}/course/${id}`;
@@ -158,6 +162,23 @@ export interface CourseInsights {
   lessons: LessonStop[];
   groups: GroupStat[];
   certificates: CertificateInfo[];
+}
+
+/** One course on the Teams tab. Counts are over the people it's assigned to. */
+export interface TeamCourseStat {
+  course_id: string;
+  title: string;
+  assigned: number;
+  finished: number;
+  in_progress: number;
+  not_started: number;
+  overdue: number;
+}
+
+/** The Teams tab: every group, and every published course that's assigned to someone. */
+export interface TeamsReport {
+  groups: GroupStat[];
+  courses: TeamCourseStat[];
 }
 
 export interface PersonSummary extends ReportPerson {
@@ -409,6 +430,31 @@ function insightsOf(v: unknown): CourseInsights {
   };
 }
 
+function teamsOf(v: unknown): TeamsReport {
+  const o = obj(v);
+
+  return {
+    groups: arr(o.groups)
+      .map(groupStatOf)
+      .filter((g) => g.id),
+    courses: arr(o.courses)
+      .map((c): TeamCourseStat => {
+        const x = obj(c);
+
+        return {
+          course_id: str(x.course_id),
+          title: str(x.title).trim() || 'Untitled course',
+          assigned: countOf(x.assigned),
+          finished: countOf(x.finished),
+          in_progress: countOf(x.in_progress),
+          not_started: countOf(x.not_started),
+          overdue: countOf(x.overdue),
+        };
+      })
+      .filter((c) => c.course_id),
+  };
+}
+
 const reportsBase = (ws: string) => `${CH_API}/${ws}/learning/reports`;
 const enc = encodeURIComponent;
 
@@ -422,6 +468,8 @@ export const reportsApi = {
   course: (ws: string, id: string) => chCall<unknown>('get', `${reportsBase(ws)}/courses/${enc(id)}`).then((d) => courseReportOf(d, id)),
   /** Answers per quiz question, knowledge checks, where people stop, due dates and groups (servers before Phase 2 answer 404). */
   insights: (ws: string, id: string) => chCall<unknown>('get', `${reportsBase(ws)}/courses/${enc(id)}/insights`).then(insightsOf),
+  /** Groups and assigned courses for the Teams tab (also gives Reports → Courses its Assigned and Overdue columns). */
+  teams: (ws: string) => chCall<unknown>('get', `${reportsBase(ws)}/teams`).then(teamsOf),
   people: (ws: string) =>
     chCall<unknown>('get', `${reportsBase(ws)}/people`).then((d) =>
       arr(obj(d).people)
@@ -681,6 +729,7 @@ function ReportTable<T>({
   empty,
   testId,
   rowTestId = 'carehub-learning-report-row',
+  initialSort,
 }: {
   rows: T[];
   cols: Col<T>[];
@@ -690,9 +739,11 @@ function ReportTable<T>({
   empty: ReactNode;
   testId?: string;
   rowTestId?: string;
+  /** Sorted by this column until someone picks another one. */
+  initialSort?: { id: string; desc: boolean };
 }) {
   const [measure, narrow] = useNarrow(620);
-  const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
+  const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(initialSort ?? null);
   const sorted = useMemo(() => {
     const key = sort ? cols.find((c) => c.id === sort.id)?.sort : undefined;
 
@@ -983,11 +1034,12 @@ function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-function ReportsNav({ active }: { active: 'courses' | 'people' }) {
+function ReportsNav({ active }: { active: 'courses' | 'people' | 'teams' }) {
   const navigate = useNavigate();
   const items = [
     { id: 'courses' as const, label: 'Courses', to: REPORTS_PATH },
     { id: 'people' as const, label: 'People', to: PEOPLE_PATH },
+    { id: 'teams' as const, label: 'Teams', to: TEAMS_PATH },
   ];
 
   return (
@@ -1101,20 +1153,105 @@ function PercentCell({ percent, label }: { percent: number; label: string }) {
   );
 }
 
+/** An on/off filter that sits next to the filter chips. */
+function ToggleChip({ on, onClick, testId, children }: { on: boolean; onClick: () => void; testId: string; children: ReactNode }) {
+  return (
+    <button
+      type='button'
+      aria-pressed={on}
+      onClick={onClick}
+      className={cn(
+        'rounded-full border px-2.5 py-1 text-xs',
+        on ? 'border-border-theme-thick font-medium text-text-primary' : 'border-border-primary text-text-secondary hover:bg-fill-content-hover'
+      )}
+      data-testid={testId}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A count of overdue people (or courses): red when there are any. */
+function OverdueNum({ n }: { n: number }) {
+  return n > 0 ? <Chip tone='red'>{n}</Chip> : <Num n={0} />;
+}
+
+/** Opens someone's certificate. Stops the click from also opening the row it sits in. */
+function CertificateChip({ code, who, onOpen }: { code: string; who: string; onOpen: (code: string) => void }) {
+  return (
+    <button
+      type='button'
+      className='chl-chip chl-green hover:underline'
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(code);
+      }}
+      title={`Certificate ${code}`}
+      aria-label={`Open ${who}’s certificate`}
+      data-testid='carehub-learning-report-certificate'
+    >
+      Certificate
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // All courses
 // ---------------------------------------------------------------------------
+
+/**
+ * A course's Assigned and Overdue numbers from the Teams report. That report only lists published courses that are
+ * assigned to someone, so any other published course has no one assigned. Archived courses aren't counted (null).
+ */
+function assignedFor(c: CourseSummary, by: Map<string, TeamCourseStat>): { assigned: number; overdue: number } | null {
+  return by.get(c.id) ?? (c.status === 'published' ? { assigned: 0, overdue: 0 } : null);
+}
 
 export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId: string; canBuild: boolean }) {
   const navigate = useNavigate();
   const load = useCallback(() => reportsApi.courses(workspaceId), [workspaceId]);
   const { data, error, reload } = useLoad(load);
+  // Assigned and Overdue come from the Teams report, loaded on its own: if it isn't there (or fails), those
+  // columns are simply left out.
+  const loadTeams = useCallback(() => reportsApi.teams(workspaceId).catch((): TeamsReport | null => null), [workspaceId]);
+  const { data: teams } = useLoad(loadTeams);
+  const assignedBy = useMemo(() => (teams ? new Map(teams.courses.map((c) => [c.course_id, c])) : null), [teams]);
   const [query, setQuery] = useState('');
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
 
     return (data || []).filter((c) => !q || c.title.toLowerCase().includes(q));
   }, [data, query]);
+  const teamCols = useMemo<Col<CourseSummary>[]>(
+    () =>
+      assignedBy
+        ? [
+            {
+              id: 'assigned',
+              label: 'Assigned',
+              right: true,
+              sort: (c) => assignedFor(c, assignedBy)?.assigned ?? null,
+              cell: (c) => {
+                const t = assignedFor(c, assignedBy);
+
+                return t ? <Num n={t.assigned} /> : null;
+              },
+            },
+            {
+              id: 'overdue',
+              label: 'Overdue',
+              right: true,
+              sort: (c) => assignedFor(c, assignedBy)?.overdue ?? null,
+              cell: (c) => {
+                const t = assignedFor(c, assignedBy);
+
+                return t ? <OverdueNum n={t.overdue} /> : null;
+              },
+            },
+          ]
+        : [],
+    [assignedBy]
+  );
   const cols = useMemo<Col<CourseSummary>[]>(
     () => [
       {
@@ -1138,6 +1275,7 @@ export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId:
         sort: (c) => pct(c.finished, c.members),
         cell: (c) => <PercentCell percent={pct(c.finished, c.members)} label={`${c.title}: share of members who finished`} />,
       },
+      ...teamCols,
       { id: 'started', label: 'Started', right: true, sort: (c) => c.started, cell: (c) => <Num n={c.started} /> },
       { id: 'in_progress', label: 'In progress', right: true, wideOnly: true, sort: (c) => c.in_progress, cell: (c) => <Num n={c.in_progress} /> },
       { id: 'finished', label: 'Finished', right: true, sort: (c) => c.finished, cell: (c) => <Num n={c.finished} /> },
@@ -1165,7 +1303,7 @@ export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId:
         cell: (c) => (c.last_activity_ms ? <When ms={c.last_activity_ms} withTime /> : null),
       },
     ],
-    []
+    [teamCols]
   );
 
   const csv = () => {
@@ -1187,6 +1325,7 @@ export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId:
         'Avg. score (%)',
         'Avg. time (minutes)',
         'Last activity',
+        ...(assignedBy ? ['Assigned', 'Overdue'] : []),
       ],
       data.map((c) => [
         c.title,
@@ -1203,6 +1342,7 @@ export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId:
         c.avg_score,
         c.started ? csvMinutes(c.avg_time_ms) : null,
         csvDate(c.last_activity_ms),
+        ...(assignedBy ? [assignedFor(c, assignedBy)?.assigned ?? null, assignedFor(c, assignedBy)?.overdue ?? null] : []),
       ])
     );
   };
@@ -1286,6 +1426,10 @@ interface CourseRow {
   person: ReportPerson;
   /** Null when they haven't opened the course. */
   e: CourseReportRow | null;
+  /** When the course is assigned to them: their due date and whether they're overdue. */
+  due: DueInfo | null;
+  /** Their latest certificate for this course, if they have one. */
+  cert: CertificateInfo | null;
 }
 
 function inCourseFilter(r: CourseRow, f: CourseFilter) {
@@ -1304,7 +1448,7 @@ const COURSE_EMPTY: Record<CourseFilter, string> = {
   not_started: 'Everyone has opened this course.',
 };
 
-function courseCols(quiz: boolean, latest: number): Col<CourseRow>[] {
+function courseCols(quiz: boolean, latest: number, showDue: boolean, openCert: (code: string) => void): Col<CourseRow>[] {
   const quizCols: Col<CourseRow>[] = quiz
     ? [
         {
@@ -1317,10 +1461,41 @@ function courseCols(quiz: boolean, latest: number): Col<CourseRow>[] {
         { id: 'attempts', label: 'Attempts', right: true, sort: (r) => r.e?.attempts ?? null, cell: (r) => (r.e ? <Num n={r.e.attempts} /> : null) },
       ]
     : [];
+  const dueCols: Col<CourseRow>[] = showDue
+    ? [
+        {
+          id: 'due',
+          label: 'Due',
+          sort: (r) => r.due?.due_ms ?? null,
+          cell: (r) =>
+            r.due && (r.due.due_ms !== null || r.due.overdue) ? (
+              <span className='inline-flex flex-wrap items-center gap-1'>
+                {r.due.due_ms !== null && <span className='whitespace-nowrap'>{shortDate(r.due.due_ms)}</span>}
+                {r.due.overdue && <Chip tone='red'>Overdue</Chip>}
+              </span>
+            ) : null,
+        },
+      ]
+    : [];
 
   return [
     { id: 'person', label: 'Person', sort: (r) => nameOf(r.person).toLowerCase(), cell: (r) => <PersonCell p={r.person} /> },
-    { id: 'status', label: 'Status', badge: true, sort: (r) => statusRank(r.e), cell: (r) => <StatusCell p={r.e} latest={latest} /> },
+    {
+      id: 'status',
+      label: 'Status',
+      badge: true,
+      sort: (r) => statusRank(r.e),
+      cell: (r) =>
+        r.cert ? (
+          <span className='inline-flex flex-wrap items-center gap-1'>
+            <StatusCell p={r.e} latest={latest} />
+            <CertificateChip code={r.cert.code} who={nameOf(r.person)} onOpen={openCert} />
+          </span>
+        ) : (
+          <StatusCell p={r.e} latest={latest} />
+        ),
+    },
+    ...dueCols,
     {
       id: 'progress',
       label: 'Progress',
@@ -1370,18 +1545,42 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
   const loadInsights = useCallback(() => reportsApi.insights(workspaceId, courseId).catch((): CourseInsights | null => null), [workspaceId, courseId]);
   const { data: insights, reload: reloadInsights } = useLoad(loadInsights);
   const [filter, setFilter] = useState<CourseFilter>('all');
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [resetting, setResetting] = useState<CourseReportRow | null>(null);
   const [notice, setNotice] = useState('');
 
-  const people = useMemo<CourseRow[]>(
-    () => (data ? [...data.rows.map((e) => ({ person: e, e })), ...data.not_started.map((p) => ({ person: p, e: null }))] : []),
-    [data]
+  const people = useMemo<CourseRow[]>(() => {
+    if (!data) return [];
+    const due = new Map((insights?.due || []).map((d) => [d.uid, d]));
+    const certs = new Map<string, CertificateInfo>();
+
+    for (const c of insights?.certificates || []) {
+      const had = certs.get(c.uid);
+
+      if (!had || c.issued_ms > had.issued_ms) certs.set(c.uid, c);
+    }
+
+    const row = (person: ReportPerson, e: CourseReportRow | null): CourseRow => ({
+      person,
+      e,
+      due: due.get(person.uid) || null,
+      cert: certs.get(person.uid) || null,
+    });
+
+    return [...data.rows.map((e) => row(e, e)), ...data.not_started.map((p) => row(p, null))];
+  }, [data, insights]);
+  const overdueCount = people.filter((r) => r.due?.overdue).length;
+  // The "Overdue only" toggle hides when no one is overdue, so it stops filtering then too.
+  const onlyOverdue = overdueOnly && overdueCount > 0;
+  const shown = useMemo(
+    () => people.filter((r) => inCourseFilter(r, filter) && (!onlyOverdue || Boolean(r.due?.overdue)) && matches(r.person, query)),
+    [people, filter, onlyOverdue, query]
   );
-  const shown = useMemo(() => people.filter((r) => inCourseFilter(r, filter) && matches(r.person, query)), [people, filter, query]);
   const quiz = Boolean(data?.course.quiz);
   const latest = data?.course.version || 0;
-  const cols = useMemo(() => courseCols(quiz, latest), [quiz, latest]);
+  const showDue = Boolean(insights && insights.due.some((d) => d.due_ms !== null || d.overdue));
+  const cols = useMemo(() => courseCols(quiz, latest, showDue, (code) => navigate(certificatePath(code))), [quiz, latest, showDue, navigate]);
 
   const back = <BackLink label='All courses' onClick={() => navigate(REPORTS_PATH)} />;
 
@@ -1442,8 +1641,15 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
           ]
         : [person.name, person.email, 'Not started', ...header.slice(3).map(() => null)]
     );
+    // Newer servers also say when it's due for each person it's assigned to, and who has a certificate.
+    const assignment = ({ due, cert }: CourseRow): CsvValue[] =>
+      insights ? [due && due.due_ms !== null ? dayStamp(due.due_ms) : null, due ? (due.overdue ? 'Yes' : 'No') : null, cert ? cert.code : null] : [];
 
-    downloadCsv(`course-report-${slug(course.title, 'course')}`, header, lines);
+    downloadCsv(
+      `course-report-${slug(course.title, 'course')}`,
+      [...header, ...(insights ? ['Due', 'Overdue', 'Certificate'] : [])],
+      lines.map((line, i) => [...line, ...assignment(people[i])])
+    );
   };
 
   return (
@@ -1457,8 +1663,26 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
               {course.version > 0 ? <Chip>{`Version ${course.version}`}</Chip> : <Chip tone='amber'>Not published</Chip>}
               {quiz && <Chip tone='purple'>{`Quiz · pass mark ${course.pass_mark}%`}</Chip>}
             </div>
+            {insights && insights.assigned > 0 && (
+              <div className='mt-1.5 flex flex-wrap items-center gap-1.5 text-sm text-text-secondary' data-testid='carehub-learning-report-assigned'>
+                <span>{`${insights.assigned} assigned`}</span>
+                <span aria-hidden='true'>·</span>
+                {insights.overdue > 0 ? <Chip tone='red'>{`${insights.overdue} overdue`}</Chip> : <span>none overdue</span>}
+              </div>
+            )}
           </div>
           <div className='flex flex-wrap gap-1.5'>
+            {insights && (
+              <Button
+                type='button'
+                size='sm'
+                variant='ghost'
+                onClick={() => navigate(assignCoursePath(course.id))}
+                data-testid='carehub-learning-see-assignments'
+              >
+                See assignments
+              </Button>
+            )}
             {canBuild && (
               <Button type='button' size='sm' variant='ghost' onClick={() => navigate(`${STUDIO_PATH}/${course.id}`)}>
                 Edit in Studio
@@ -1489,6 +1713,11 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
       <ChSection title='People' hint='Everyone in the workspace except guests.'>
         <Toolbar>
           <FilterChips value={filter} options={filters} onChange={setFilter} />
+          {overdueCount > 0 && (
+            <ToggleChip on={onlyOverdue} onClick={() => setOverdueOnly(!onlyOverdue)} testId='carehub-learning-overdue-only'>
+              Overdue only <span className='tabular-nums text-text-tertiary'>{overdueCount}</span>
+            </ToggleChip>
+          )}
           <div className='flex-1' />
           <SearchBox value={query} onChange={setQuery} label='Search people' />
         </Toolbar>
@@ -1517,10 +1746,20 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
                   ) : null
               : undefined
           }
-          empty={query.trim() ? `No one matches “${query.trim()}”.` : COURSE_EMPTY[filter]}
+          empty={query.trim() ? `No one matches “${query.trim()}”.` : onlyOverdue ? 'No one here is overdue.' : COURSE_EMPTY[filter]}
           testId='carehub-learning-report-table'
         />
       </ChSection>
+
+      {insights && insights.groups.length > 0 && (
+        <ChSection title='By group' hint='How the members of each group are doing with this course. Counts are for the members it’s assigned to.'>
+          <GroupTable
+            groups={insights.groups}
+            barLabel={(g) => `${g.name}: share of members with this course who finished`}
+            testId='carehub-learning-report-groups'
+          />
+        </ChSection>
+      )}
 
       {insights && insights.lessons.length > 0 && <WherePeopleStop lessons={insights.lessons} courseTitle={course.title} />}
 
@@ -1679,20 +1918,9 @@ function QuestionStats({
           {hasDetails && (
             <Toolbar>
               {canSort && (
-                <button
-                  type='button'
-                  aria-pressed={hardest}
-                  onClick={() => setHardest((h) => !h)}
-                  className={cn(
-                    'rounded-full border px-2.5 py-1 text-xs',
-                    hardest
-                      ? 'border-border-theme-thick font-medium text-text-primary'
-                      : 'border-border-primary text-text-secondary hover:bg-fill-content-hover'
-                  )}
-                  data-testid='carehub-learning-hardest-first'
-                >
+                <ToggleChip on={hardest} onClick={() => setHardest((h) => !h)} testId='carehub-learning-hardest-first'>
                   Hardest first
-                </button>
+                </ToggleChip>
               )}
               <div className='flex-1' />
               <CsvButton
@@ -2236,6 +2464,193 @@ function PersonReportView({ workspaceId, uid }: { workspaceId: string; uid: stri
           )}
         </ChSection>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Teams: every group, and every course that's assigned to someone
+// ---------------------------------------------------------------------------
+
+const TEAMS_NOT_LIVE = 'Team reports will show here after the next Care Hub update.';
+
+interface TeamCounts {
+  assigned: number;
+  finished: number;
+  in_progress: number;
+  not_started: number;
+  overdue: number;
+}
+
+/** Completion bar, then the counts. Members only for groups. */
+function countCols<T extends TeamCounts>(barLabel: (row: T) => string, members?: (row: T) => number): Col<T>[] {
+  const memberCols: Col<T>[] = members ? [{ id: 'members', label: 'Members', right: true, sort: members, cell: (r) => <Num n={members(r)} /> }] : [];
+
+  return [
+    {
+      id: 'completion',
+      label: 'Completion',
+      desc: true,
+      sort: (r) => (r.assigned ? pct(r.finished, r.assigned) : null),
+      cell: (r) => (r.assigned ? <PercentCell percent={pct(r.finished, r.assigned)} label={barLabel(r)} /> : null),
+    },
+    ...memberCols,
+    { id: 'assigned', label: 'Assigned', right: true, sort: (r) => r.assigned, cell: (r) => <Num n={r.assigned} /> },
+    { id: 'finished', label: 'Finished', right: true, sort: (r) => r.finished, cell: (r) => <Num n={r.finished} /> },
+    { id: 'in_progress', label: 'In progress', right: true, sort: (r) => r.in_progress, cell: (r) => <Num n={r.in_progress} /> },
+    { id: 'not_started', label: 'Not started', right: true, sort: (r) => r.not_started, cell: (r) => <Num n={r.not_started} /> },
+    { id: 'overdue', label: 'Overdue', right: true, sort: (r) => r.overdue, cell: (r) => <OverdueNum n={r.overdue} /> },
+  ];
+}
+
+/** Groups A–Z, with the most overdue first until someone sorts by another column. A row opens the group. */
+function GroupTable({ groups, barLabel, testId }: { groups: GroupStat[]; barLabel: (g: GroupStat) => string; testId: string }) {
+  const navigate = useNavigate();
+  const rows = useMemo(() => [...groups].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })), [groups]);
+  const cols: Col<GroupStat>[] = [
+    {
+      id: 'group',
+      label: 'Group',
+      sort: (g) => g.name.toLowerCase(),
+      cell: (g) => <span className='break-words font-medium text-text-primary'>{g.name}</span>,
+    },
+    ...countCols<GroupStat>(barLabel, (g) => g.members),
+  ];
+
+  return (
+    <ReportTable
+      rows={rows}
+      cols={cols}
+      rowKey={(g) => g.id}
+      onOpen={(g) => navigate(groupPath(g.id))}
+      empty='No groups yet. Groups are made in Learning → Assign.'
+      testId={testId}
+      rowTestId='carehub-learning-report-group'
+      initialSort={{ id: 'overdue', desc: true }}
+    />
+  );
+}
+
+const TEAM_COURSE_COLS: Col<TeamCourseStat>[] = [
+  {
+    id: 'course',
+    label: 'Course',
+    sort: (c) => c.title.toLowerCase(),
+    cell: (c) => <span className='break-words font-medium text-text-primary'>{c.title}</span>,
+  },
+  ...countCols<TeamCourseStat>((c) => `${c.title}: share of assigned people who finished`),
+];
+
+export function LearningReportsTeams({ workspaceId }: { workspaceId: string }) {
+  const navigate = useNavigate();
+  const load = useCallback(() => reportsApi.teams(workspaceId), [workspaceId]);
+  const { data, error, reload } = useLoad(load);
+
+  const groupsCsv = () => {
+    if (!data) return;
+    downloadCsv(
+      'team-report-groups',
+      ['Group', 'Members', 'Assigned', 'Finished', 'In progress', 'Not started', 'Overdue', 'Completion (% of assigned)'],
+      data.groups.map((g) => [
+        g.name,
+        g.members,
+        g.assigned,
+        g.finished,
+        g.in_progress,
+        g.not_started,
+        g.overdue,
+        g.assigned ? pct(g.finished, g.assigned) : null,
+      ])
+    );
+  };
+  const coursesCsv = () => {
+    if (!data) return;
+    downloadCsv(
+      'team-report-courses',
+      ['Course', 'Assigned', 'Finished', 'In progress', 'Not started', 'Overdue', 'Completion (% of assigned)'],
+      data.courses.map((c) => [
+        c.title,
+        c.assigned,
+        c.finished,
+        c.in_progress,
+        c.not_started,
+        c.overdue,
+        c.assigned ? pct(c.finished, c.assigned) : null,
+      ])
+    );
+  };
+
+  let body: ReactNode;
+
+  if (!data) {
+    if (!error) body = <Loading />;
+    else if (learningNotLive(error)) body = <ChNote tone='info'>{TEAMS_NOT_LIVE}</ChNote>;
+    else body = <LoadError error={error} onRetry={reload} />;
+  } else {
+    const overdue = data.courses.reduce((n, c) => n + c.overdue, 0);
+
+    body = (
+      <>
+        {error ? <RefreshError error={error} onRetry={reload} /> : null}
+        <Cards>
+          <ChCard label='Groups' value={data.groups.length} hint='Made in Learning → Assign' />
+          <ChCard label='Courses' value={data.courses.length} hint='Assigned to at least one person' />
+          <ChCard label='Overdue' value={overdue} hint='Across all courses' />
+        </Cards>
+        <ChSection
+          title='Groups'
+          hint='How each group’s members are doing with the courses assigned to them. Someone with three courses counts three times.'
+          right={
+            data.groups.length > 0 ? (
+              <CsvButton
+                onClick={groupsCsv}
+                title='Every group with its numbers, as a file for Excel or Google Sheets'
+                ariaLabel='Download groups (CSV)'
+                testId='carehub-learning-csv-team-groups'
+              />
+            ) : undefined
+          }
+        >
+          <GroupTable
+            groups={data.groups}
+            barLabel={(g) => `${g.name}: share of assigned courses finished`}
+            testId='carehub-learning-report-team-groups'
+          />
+        </ChSection>
+        <ChSection
+          title='Courses'
+          hint='Published courses that are assigned to someone. Counts are for the people each one is assigned to.'
+          right={
+            data.courses.length > 0 ? (
+              <CsvButton
+                onClick={coursesCsv}
+                title='Every assigned course with its numbers, as a file for Excel or Google Sheets'
+                ariaLabel='Download courses (CSV)'
+                testId='carehub-learning-csv-team-courses'
+              />
+            ) : undefined
+          }
+        >
+          <ReportTable
+            rows={data.courses}
+            cols={TEAM_COURSE_COLS}
+            rowKey={(c) => c.course_id}
+            onOpen={(c) => navigate(coursePath(c.course_id))}
+            empty='No courses are assigned to anyone yet. Courses are assigned in Learning → Assign.'
+            testId='carehub-learning-report-team-courses'
+            rowTestId='carehub-learning-report-team-course'
+          />
+        </ChSection>
+      </>
+    );
+  }
+
+  return (
+    <div data-testid='carehub-learning-report-teams'>
+      <div className='mb-5 flex flex-wrap items-center gap-2'>
+        <ReportsNav active='teams' />
+      </div>
+      {body}
     </div>
   );
 }
