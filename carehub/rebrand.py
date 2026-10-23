@@ -1335,5 +1335,11 @@ EDITS.setdefault("src/components/app/header/AppHeader.tsx", []).extend([
      "|| window.location.pathname === '/app/analytics' || window.location.pathname.startsWith('/app/learning');\n", 1),
 ])
 
+# ---------------------------------------------------------------------------
+# CareHub Learning: assign courses (people, groups, roles), due dates in My learning, certificates.
+# ---------------------------------------------------------------------------
+for _name in ["CareHubLearningAssignApi.ts", "CareHubLearningAssign.tsx", "CareHubLearningCertificate.tsx"]:
+    EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
+
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,5 +1,6 @@
-// CareHub Learning: the /app/learning page. "My learning" (continue, finished, catalog), the course player,
-// Studio for people who build courses, and Reports for people who can see course reports.
+// CareHub Learning: the /app/learning page. "My learning" (assigned to you, continue, finished, catalog), the course
+// player, Studio for people who build courses, Assign for people who assign courses, Reports for people who can see
+// course reports, and certificates (my certificates, a printable certificate, verify a code).
 import { Component, useEffect, useMemo, useState } from 'react';
 
 import type { ErrorInfo, ReactNode } from 'react';
@@ -11,7 +12,10 @@ import { cn } from '@/lib/utils';
 
 import { carehubCan, formatWhen, lastWorkspaceId, UUID_RE, useCareHubMe } from './CareHubCore';
 import { formatMinutes, isFinished, lapi, LEARNING_PATH, learningNotLive, lErrorText, plural, statusInfo } from './CareHubLearningApi';
+import { AssignedToYou, LearningAssignPage, useAssignedCourses } from './CareHubLearningAssign';
+import { assignedDone } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
+import { LearningCertificate, LearningHeaderLinks, LearningMyCertificates, LearningVerify } from './CareHubLearningCertificate';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import { LearningReportCourse, LearningReportPerson, LearningReportsCourses, LearningReportsPeople, REPORTS_PATH } from './CareHubLearningReports';
 import { LearningStudioEditor, LearningStudioHome } from './CareHubLearningStudio';
@@ -157,6 +161,8 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
   const [error, setError] = useState<unknown>(null);
   const [query, setQuery] = useState('');
   const [reload, setReload] = useState(0);
+  // Courses assigned to me (undefined while loading, null when that part of the server isn't there yet).
+  const assigned = useAssignedCourses(workspaceId, reload);
 
   useEffect(() => {
     if (!workspaceId) return undefined;
@@ -179,7 +185,9 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
   }, [workspaceId, reload]);
 
   const open = (c: CourseCard) => navigate(`${LEARNING_PATH}/course/${c.id}`);
-  const inProgress = useMemo(() => (my || []).filter((c) => c.my && !isFinished(c.my) && !c.archived), [my]);
+  // Unfinished assigned courses already show under "Assigned to you".
+  const assignedTodo = useMemo(() => new Set((assigned || []).filter((c) => !assignedDone(c)).map((c) => c.id)), [assigned]);
+  const inProgress = useMemo(() => (my || []).filter((c) => c.my && !isFinished(c.my) && !c.archived && !assignedTodo.has(c.id)), [my, assignedTodo]);
   const finished = useMemo(() => (my || []).filter((c) => c.my && isFinished(c.my)), [my]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -199,9 +207,9 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
     );
   }
 
-  if (!my || !catalog) return <div className='text-sm text-text-tertiary'>Loading…</div>;
+  if (!my || !catalog || assigned === undefined) return <div className='text-sm text-text-tertiary'>Loading…</div>;
 
-  const nothing = !catalog.some((c) => !c.archived) && !my.length;
+  const nothing = !catalog.some((c) => !c.archived) && !my.length && !assigned?.length;
 
   if (nothing) {
     return (
@@ -228,6 +236,8 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
 
   return (
     <>
+      {assigned && assigned.length > 0 && <AssignedToYou courses={assigned} onOpen={open} />}
+
       {inProgress.length > 0 && (
         <ChSection title='Continue learning'>
           <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
@@ -291,6 +301,7 @@ function PlayerRoute({ workspaceId }: { workspaceId: string }) {
 }
 
 const STUDIO_ONLY = 'Studio is for people with the “Build courses” permission. Ask an admin if you need it.';
+const ASSIGN_ONLY = 'Assigning courses is for people with the “Assign courses” permission. Ask an admin if you need it.';
 const REPORTS_ONLY = 'Reports are for people with the “See course reports” or “Build courses” permission. Ask an admin if you need it.';
 
 function OnlyFor({ known, allowed, message, children }: { known: boolean; allowed: boolean; message: string; children: ReactNode }) {
@@ -300,13 +311,14 @@ function OnlyFor({ known, allowed, message, children }: { known: boolean; allowe
   return <>{children}</>;
 }
 
-type TabId = 'home' | 'studio' | 'reports';
+type TabId = 'home' | 'studio' | 'assign' | 'reports';
 
-function Tabs({ active, canBuild, canReports }: { active: TabId; canBuild: boolean; canReports: boolean }) {
+function Tabs({ active, canBuild, canAssign, canReports }: { active: TabId; canBuild: boolean; canAssign: boolean; canReports: boolean }) {
   const navigate = useNavigate();
   const tabs: { id: TabId; label: string; to: string }[] = [
     { id: 'home', label: 'My learning', to: LEARNING_PATH },
     ...(canBuild ? [{ id: 'studio' as const, label: 'Studio', to: `${LEARNING_PATH}/studio` }] : []),
+    ...(canAssign ? [{ id: 'assign' as const, label: 'Assign', to: `${LEARNING_PATH}/assign` }] : []),
     ...(canReports ? [{ id: 'reports' as const, label: 'Reports', to: REPORTS_PATH }] : []),
   ];
 
@@ -342,11 +354,16 @@ function LearningRoutes() {
   const canBuild = Boolean(me && !me.is_guest && carehubCan(me, 'learning_build'));
   // Builders can always see reports for the courses they make.
   const canReports = Boolean(me && !me.is_guest && (carehubCan(me, 'learning_build') || carehubCan(me, 'learning_analytics')));
+  const canAssign = Boolean(me && !me.is_guest && carehubCan(me, 'learning_assign'));
+  // Builders and report viewers may look at assignments and groups (read-only) when they have a link.
+  const canSeeAssign = canAssign || canBuild || canReports;
   const rest = location.pathname.startsWith(LEARNING_PATH) ? location.pathname.slice(LEARNING_PATH.length) : '';
+  const onHome = rest === '' || rest === '/';
   const inStudio = /^\/studio(\/|$)/.test(rest);
   const inEditor = /^\/studio\/[^/]+/.test(rest);
   const inPlayer = /^\/course\//.test(rest);
   const inReports = /^\/reports(\/|$)/.test(rest);
+  const inAssign = /^\/assign(\/|$)/.test(rest);
 
   useEffect(() => {
     document.title = 'Learning · Care Hub';
@@ -362,15 +379,21 @@ function LearningRoutes() {
 
   return (
     <div
-      className={cn('carehub-learning mx-auto w-full px-4 py-6 sm:px-8', inEditor || inReports ? 'max-w-[1240px]' : 'max-w-[1000px]')}
+      className={cn('carehub-learning mx-auto w-full px-4 py-6 sm:px-8', inEditor || inReports || inAssign ? 'max-w-[1240px]' : 'max-w-[1000px]')}
       data-testid='carehub-learning'
     >
       {!inPlayer && !inEditor && (
         <>
           <div className='mb-3 flex flex-wrap items-center gap-3'>
             <h1 className='flex-1 text-2xl font-semibold'>🎓 Learning</h1>
+            {onHome && workspaceId && <LearningHeaderLinks workspaceId={workspaceId} />}
           </div>
-          <Tabs active={inStudio ? 'studio' : inReports ? 'reports' : 'home'} canBuild={canBuild} canReports={canReports} />
+          <Tabs
+            active={inStudio ? 'studio' : inAssign ? 'assign' : inReports ? 'reports' : 'home'}
+            canBuild={canBuild}
+            canAssign={canAssign}
+            canReports={canReports}
+          />
         </>
       )}
       {!workspaceId ? (
@@ -427,6 +450,17 @@ function LearningRoutes() {
               </OnlyFor>
             }
           />
+          <Route
+            path='assign/*'
+            element={
+              <OnlyFor known={known} allowed={canSeeAssign} message={ASSIGN_ONLY}>
+                <LearningAssignPage workspaceId={workspaceId} canAssign={canAssign} canBuild={canBuild} canReports={canReports} />
+              </OnlyFor>
+            }
+          />
+          <Route path='certificates' element={<LearningMyCertificates workspaceId={workspaceId} />} />
+          <Route path='certificate/:code' element={<LearningCertificate workspaceId={workspaceId} />} />
+          <Route path='verify' element={<LearningVerify workspaceId={workspaceId} />} />
           <Route path='*' element={<Navigate to={LEARNING_PATH} replace />} />
         </Routes>
       )}
