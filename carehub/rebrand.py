@@ -1294,8 +1294,6 @@ EDITS.setdefault("src/components/app/settings/Settings.tsx", []).extend([
      "        {open && (selectedItem as string) === CAREHUB_DATA_ITEM && <CareHubDataPanel />}\n", 1),
 ])
 
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 # ---------------------------------------------------------------------------
@@ -1312,3 +1310,6 @@ EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
 
 # CareHub: Google Calendar through a Google Apps Script (no Google Cloud console).
 EXTRA_FILES[HERE / "web" / "CareHubGoogleScript.tsx"] = "src/components/carehub/CareHubGoogleScript.tsx"
+
+if __name__ == "__main__":
+    sys.exit(main())
