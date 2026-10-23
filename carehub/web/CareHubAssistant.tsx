@@ -32,7 +32,7 @@ import { getTokenParsed } from '@/application/session/token';
 import { cn } from '@/lib/utils';
 import { getPlatform } from '@/utils/platform';
 
-import { lastWorkspaceId, useCareHubCan, workspaceFromPath } from './CareHubCore';
+import { chErrorText, lastWorkspaceId, useCareHubCan, workspaceFromPath } from './CareHubCore';
 
 const API = '/api/carehub/assistant';
 const UI_KEY = 'carehub-assistant-ui';
@@ -165,9 +165,7 @@ function call<T>(method: 'get' | 'post' | 'put' | 'delete', url: string, data?: 
 }
 
 function errorText(err: unknown) {
-  const msg = (err as { message?: string })?.message;
-
-  return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
+  return chErrorText(err);
 }
 
 // ---------------------------------------------------------------------------

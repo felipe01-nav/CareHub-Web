@@ -11,10 +11,33 @@ export function chCall<T>(method: 'get' | 'post' | 'put' | 'delete', url: string
   return executeAPIRequest<T>(() => getAxios()?.request({ method, url, data }));
 }
 
-export function chErrorText(err: unknown) {
-  const msg = (err as { message?: string })?.message;
+const SERVER_PREFIX =
+  /^\s*(invalid request|not enough permissions|record not found|record already exists|invalid password|invalid email)\s*:\s*/i;
 
-  return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
+/**
+ * Words to show for a failed Care Hub request. The app swaps server messages for generic ones
+ * ("This request isn't valid."), but Care Hub's server writes its messages for people, so show those.
+ */
+export function chErrorText(err: unknown) {
+  const e = (err || {}) as {
+    message?: string;
+    diagnosticMessage?: string;
+    sourceDomain?: string;
+    httpStatus?: number;
+  };
+  const generic =
+    typeof e.message === 'string' && e.message.trim() ? e.message.trim() : 'Something went wrong. Please try again.';
+  const server = typeof e.diagnosticMessage === 'string' ? e.diagnosticMessage.trim() : '';
+
+  if (!server || server === 'Request failed' || e.sourceDomain === 'transport' || e.sourceDomain === 'client') {
+    return generic;
+  }
+
+  if (/^internal error/i.test(server) || (e.httpStatus ?? 0) >= 500) {
+    return server === generic ? generic : `${generic} (${server.slice(0, 200)})`;
+  }
+
+  return server.replace(SERVER_PREFIX, '').trim() || generic;
 }
 
 /** Minutes east of UTC, e.g. -360 in Utah in summer. */

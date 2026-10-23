@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 import { CareHubModal } from './CareHubUi';
+import { chErrorText } from './CareHubCore';
 
 const KEY_STORE = 'carehub-google-script-key';
 
@@ -126,9 +127,7 @@ function call<T>(method: 'get' | 'post', url: string, data?: unknown) {
 }
 
 function errorText(err: unknown) {
-  const msg = (err as { message?: string })?.message;
-
-  return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
+  return chErrorText(err);
 }
 
 function newKey() {
