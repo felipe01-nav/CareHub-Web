@@ -298,6 +298,7 @@ function StudioRowView({
   onDuplicate,
   onArchive,
   onDelete,
+  onReport,
 }: {
   row: StudioRow;
   busy: boolean;
@@ -305,6 +306,7 @@ function StudioRowView({
   onDuplicate: () => void;
   onArchive: (archived: boolean) => void;
   onDelete: () => void;
+  onReport?: () => void;
 }) {
   const everPublished = row.published_version !== null;
   const who = row.updated_by_name || row.created_by_name;
@@ -328,6 +330,11 @@ function StudioRowView({
         <Button type='button' size='sm' variant='outline' disabled={busy} onClick={onDuplicate}>
           Duplicate
         </Button>
+        {everPublished && onReport && (
+          <Button type='button' size='sm' variant='ghost' onClick={onReport} data-testid='carehub-learning-studio-report'>
+            Report
+          </Button>
+        )}
         {row.status === 'published' && (
           <Button type='button' size='sm' variant='ghost' disabled={busy} onClick={() => onArchive(true)}>
             Archive
@@ -506,6 +513,7 @@ export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
                 setDeleteError('');
                 setToDelete(r);
               }}
+              onReport={() => navigate(`${LEARNING_PATH}/reports/course/${r.id}`)}
             />
           ))}
           {archived.length > 0 && (

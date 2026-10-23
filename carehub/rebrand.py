@@ -1312,11 +1312,12 @@ EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
 EXTRA_FILES[HERE / "web" / "CareHubGoogleScript.tsx"] = "src/components/carehub/CareHubGoogleScript.tsx"
 
 # ---------------------------------------------------------------------------
-# CareHub Learning: courses (Studio), the course player, My learning + Catalog.
+# CareHub Learning: courses (Studio), the course player, My learning + Catalog, Reports + CSV export.
 # ---------------------------------------------------------------------------
 for _name in [
     "CareHubLearningApi.ts", "CareHubLearning.tsx", "CareHubLearningBlocks.tsx", "CareHubLearningPlayer.tsx",
     "CareHubLearningStudio.tsx", "CareHubLearningStudioBlocks.tsx", "CareHubLearningExample.ts",
+    "CareHubLearningReports.tsx",
 ]:
     EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
 
