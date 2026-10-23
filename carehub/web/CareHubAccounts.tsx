@@ -1277,8 +1277,8 @@ function CareHubBulkAdd({ workspaceId, onClose, onChanged }: {
             ))}
           </BulkList>
           <div className='text-xs text-text-tertiary'>
-            Names are only used in this list and the results file for now. People can add their name in their profile
-            after they sign in.
+            New accounts get the names in this list. People can change their name in their profile after they sign
+            in. Existing accounts keep the name they have.
           </div>
           {todo.length === 0 && (
             <div role='status' className='rounded-[8px] bg-fill-content-hover px-3 py-2 text-sm text-text-primary'>
