@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 import { expandIcs, IcsEvent, parseIcs } from './CareHubIcs';
+import { CareHubEventActions } from './CareHubMeetingNotes';
 
 export const CAREHUB_CALENDAR_PATH = '/app/calendar';
 
@@ -2508,6 +2509,7 @@ function EventPanel({
           {link.label}
         </Button>
       )}
+      <CareHubEventActions event={event} />
       {event.location && (
         <div>
           <div className='text-xs font-medium uppercase tracking-wide text-text-tertiary'>Location</div>

@@ -32,6 +32,8 @@ import { getTokenParsed } from '@/application/session/token';
 import { cn } from '@/lib/utils';
 import { getPlatform } from '@/utils/platform';
 
+import { lastWorkspaceId, useCareHubCan, workspaceFromPath } from './CareHubCore';
+
 const API = '/api/carehub/assistant';
 const UI_KEY = 'carehub-assistant-ui';
 const LAST_KEY = 'carehub-assistant-last';
@@ -131,7 +133,12 @@ function useUi() {
 }
 
 function useEnabled() {
-  return useSyncExternalStore(subscribe, () => enabled);
+  const on = useSyncExternalStore(subscribe, () => enabled);
+  // Roles: hide Claude for people whose role doesn't include "Use Claude".
+  const workspaceId = workspaceFromPath(window.location.pathname) || lastWorkspaceId();
+  const allowed = useCareHubCan(workspaceId, 'ai');
+
+  return on && allowed;
 }
 
 /** Opens the Claude panel (optionally with a question ready to send). */

@@ -74,7 +74,7 @@ function errorText(err: unknown) {
 }
 
 export function personName(p: Person | null | undefined) {
-  if (!p) return 'Someone';
+  if (!p) return 'Care Hub';
 
   return p.name?.trim() || p.email?.split('@')[0] || 'Someone';
 }
