@@ -616,6 +616,20 @@ EDITS["src/components/app/settings/Settings.tsx"] = [
      "        )}\n", 1),
 ]
 
+# Settings asks "close anyway?" before it closes (click outside) or changes page while "Add many people"
+# has new passwords that haven't been downloaded. Escape is already caught inside the panel.
+EDITS["src/components/app/settings/Settings.tsx"] += [
+    ("import SettingMenu from '@/components/app/settings/SettingMenu';\n",
+     "import SettingMenu from '@/components/app/settings/SettingMenu';\n"
+     "import { carehubAccountsMayLeave } from '@/components/carehub/CareHubAccounts';\n", 1),
+    ("      onClose={onClose}\n",
+     "      onClose={() => {\n        if (carehubAccountsMayLeave('close')) onClose();\n      }}\n", 1),
+    ("      <SettingMenu onSelectItem={setSelectedItem} selectedItem={selectedItem} showBilling={showBilling} />\n",
+     "      <SettingMenu\n        onSelectItem={(item) => {\n"
+     "          if (item === selectedItem || carehubAccountsMayLeave('page')) setSelectedItem(item);\n        }}\n"
+     "        selectedItem={selectedItem}\n        showBilling={showBilling}\n      />\n", 1),
+]
+
 
 # ---------------------------------------------------------------------------
 # CareHub: "Freeze columns" in table views. Column menu > "Freeze up to this

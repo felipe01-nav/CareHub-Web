@@ -286,6 +286,22 @@ const BULK_PARALLEL = 2;
 /** Stop by itself after this many problems in a row (for example the sign-in expired). */
 const BULK_STOP_AFTER_PROBLEMS = 5;
 
+/** True while "Add many people" is making accounts or has starting passwords that haven't been downloaded. */
+let bulkPasswordsAtRisk = false;
+
+/**
+ * The Settings window asks this before it closes or changes page (see rebrand.py).
+ * True when it may go ahead: nothing would be lost, or the administrator chose to go anyway.
+ */
+export function carehubAccountsMayLeave(kind: 'close' | 'page' = 'close'): boolean {
+  if (!bulkPasswordsAtRisk) return true;
+  return window.confirm(
+    kind === 'close'
+      ? "The new passwords haven't been downloaded. If you close now, they're lost. Close anyway?"
+      : "The new passwords haven't been downloaded. If you leave this page now, they're lost. Leave anyway?"
+  );
+}
+
 const EMAIL_HEADERS = ['email', 'emailaddress', 'emailvalue', 'mail'];
 const NAME_HEADERS = ['name', 'fullname', 'displayname'];
 const FIRST_NAME_HEADERS = ['firstname', 'givenname'];
@@ -886,6 +902,7 @@ function CareHubBulkAdd({ workspaceId, onClose, onChanged }: {
 
   useEffect(() => {
     if (!guard) return undefined;
+    bulkPasswordsAtRisk = true;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
@@ -901,6 +918,7 @@ function CareHubBulkAdd({ workspaceId, onClose, onChanged }: {
     window.addEventListener('beforeunload', warn);
     window.addEventListener('keydown', escape, true);
     return () => {
+      bulkPasswordsAtRisk = false;
       window.removeEventListener('beforeunload', warn);
       window.removeEventListener('keydown', escape, true);
     };
