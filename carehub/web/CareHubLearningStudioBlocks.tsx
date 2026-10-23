@@ -8,7 +8,7 @@ import { executeAPIRequest, getAxios } from '@/application/services/js-services/
 import { cn } from '@/lib/utils';
 
 import { chErrorText } from './CareHubCore';
-import { clampInt, newId, setQuestionKind, urlAllowed } from './CareHubLearningApi';
+import { clampInt, EMBED_SITES, embedKind, newId, setQuestionKind, urlAllowed } from './CareHubLearningApi';
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
@@ -46,7 +46,7 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
   video: { emoji: '🎬', label: 'Video', hint: 'Upload a video, or a YouTube, Vimeo or Loom link' },
   audio: { emoji: '🎧', label: 'Audio', hint: 'A sound clip you upload or link to' },
   file: { emoji: '📎', label: 'File', hint: 'A file people can download' },
-  embed: { emoji: '🧩', label: 'Embed', hint: 'Show another website inside the lesson' },
+  embed: { emoji: '🧩', label: 'Embed', hint: 'Show a Google Doc or Form, Canva, Miro, Figma and more' },
   accordion: { emoji: '🔽', label: 'Accordion', hint: 'Sections people open one at a time' },
   tabs: { emoji: '🗂️', label: 'Tabs', hint: 'Sections side by side' },
   process: { emoji: '👣', label: 'Process', hint: 'Steps people go through one at a time' },
@@ -300,12 +300,21 @@ function linkProblem(url: string, httpsOnly = false) {
   return '';
 }
 
+/** Plain words when an embed's website isn't one embeds can show (learners would only get an "Open ↗" link). */
+function embedProblem(url: string) {
+  const u = url.trim();
+
+  if (!/^https:\/\//i.test(u) || embedKind(u)) return '';
+  return `Embeds can’t show this website. They can show ${EMBED_SITES}. For other websites, add a link instead.`;
+}
+
 export function UrlField({
   label,
   value,
   onChange,
   placeholder,
   httpsOnly,
+  problem: extraProblem,
   hint,
 }: {
   label: string;
@@ -313,9 +322,11 @@ export function UrlField({
   onChange: (v: string) => void;
   placeholder?: string;
   httpsOnly?: boolean;
+  /** Shown in red when the link itself is fine, e.g. a website embeds can't show. */
+  problem?: string;
   hint?: ReactNode;
 }) {
-  const problem = linkProblem(value, httpsOnly);
+  const problem = linkProblem(value, httpsOnly) || extraProblem || '';
 
   return (
     <Field label={label} hint={problem ? <span className='text-text-error'>{problem}</span> : hint}>
@@ -1449,7 +1460,8 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
               httpsOnly
               value={block.url}
               onChange={(v) => onChange({ ...block, url: v })}
-              hint='Some websites don’t allow being shown inside other pages.'
+              problem={embedProblem(block.url)}
+              hint={`Embeds can show ${EMBED_SITES}. For other websites, add a link instead.`}
             />
           </div>
           <Field label='Height (px)'>

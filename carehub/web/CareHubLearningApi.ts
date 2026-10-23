@@ -1,5 +1,7 @@
 // CareHub Learning: types, server calls and small helpers shared by the Learning screens
 // (My learning, the course player, Studio). The server lives in CareHub-Cloud `carehub_learning.rs`.
+import { getTokenParsed } from '@/application/session/token';
+
 import { chCall, chErrorText, CH_API } from './CareHubCore';
 
 export const LEARNING_PATH = '/app/learning';
@@ -329,7 +331,12 @@ const enc = encodeURIComponent;
 export const lapi = {
   catalog: (ws: string) =>
     chCall<{ courses: unknown[] }>('get', `${base(ws)}/catalog`).then((d) => arr(obj(d).courses).map(normalizeCard)),
-  my: (ws: string) => chCall<{ courses: unknown[] }>('get', `${base(ws)}/my`).then((d) => arr(obj(d).courses).map(normalizeCard)),
+  my: (ws: string) => {
+    // Learning is starting: delete any progress someone else left waiting on this computer.
+    clearOtherQueues(signedInPerson());
+
+    return chCall<{ courses: unknown[] }>('get', `${base(ws)}/my`).then((d) => arr(obj(d).courses).map(normalizeCard));
+  },
   play: (ws: string, id: string) =>
     chCall<unknown>('get', `${base(ws)}/courses/${enc(id)}/play`).then((d) => ({
       course: normalizePlay(obj(d).course, id),
@@ -1361,6 +1368,59 @@ export function effectiveCompletion(c: Pick<Content, 'settings' | 'quiz'>): Comp
   return c.quiz.enabled ? c.settings.completion : 'all_lessons';
 }
 
+// ---------------------------------------------------------------------------
+// Embeds: the websites a lesson may show inside it (the server checks the same list when publishing)
+// ---------------------------------------------------------------------------
+
+export const EMBED_HOSTS = {
+  /** Shown inside the lesson, in a sandboxed frame. */
+  frame: ['docs.google.com', 'forms.gle', 'forms.office.com', 'forms.microsoft.com', 'www.canva.com', 'view.genial.ly', 'miro.com', 'www.figma.com', 'scribehow.com', 'app.tango.us'],
+  /** Played in the course's video player, like a video block. */
+  video: ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'youtube-nocookie.com', 'www.youtube-nocookie.com', 'vimeo.com', 'www.vimeo.com', 'player.vimeo.com', 'loom.com', 'www.loom.com'],
+} as const;
+
+/** The websites in words (the server's message uses the same words). */
+export const EMBED_SITES = 'Google Docs or Forms, Microsoft Forms, Canva, Genially, Miro, Figma, Scribe, Tango, YouTube, Vimeo or Loom';
+
+/** The server's message for an embed of any other website. `at` is like `block 2 of Lesson 1 ("Welcome")`. */
+export function embedNotAllowed(at: string) {
+  return `The embed in ${at} can only show ${EMBED_SITES}. For other websites, add a link instead.`;
+}
+
+/**
+ * How an embed link may be shown: 'frame' (a site in the list), 'video' (YouTube, Vimeo or Loom) or null for anything
+ * else — then learners get an "Open ↗" link instead. Only plain https:// links to a listed site count: no port, no
+ * user@, never Care Hub itself or a relative link.
+ */
+export function embedKind(url: string): 'frame' | 'video' | null {
+  const u = url.trim();
+  const m = /^https:\/\/([^/?#]*)/i.exec(u);
+
+  if (!m || /\s/.test(u)) return null;
+  const host = m[1].toLowerCase();
+  const kind = (EMBED_HOSTS.frame as readonly string[]).includes(host) ? 'frame' : (EMBED_HOSTS.video as readonly string[]).includes(host) ? 'video' : null;
+
+  if (!kind) return null;
+  try {
+    const parsed = new URL(u);
+
+    if (parsed.protocol !== 'https:' || parsed.hostname !== host || parsed.port || parsed.username || parsed.password) return null;
+    if (typeof window !== 'undefined' && host === window.location.hostname.toLowerCase()) return null;
+  } catch {
+    return null;
+  }
+
+  return kind;
+}
+
+/** Lesson 2 ("Using the CRM"), the way the server names a lesson in its messages. */
+function serverLessonName(index: number, title: string) {
+  const chars = [...title.trim()];
+
+  if (!chars.length) return `Lesson ${index + 1}`;
+  return `Lesson ${index + 1} ("${chars.slice(0, 40).join('')}${chars.length > 40 ? '…' : ''}")`;
+}
+
 export function urlAllowed(url: string) {
   const u = url.trim();
 
@@ -1416,15 +1476,15 @@ export function validateContent(c: Content): string[] {
     see(l.id);
     if (!l.title.trim()) out.push(`Lesson ${i + 1} needs a title.`);
     if (!l.blocks.length) out.push(`${name} needs at least one block.`);
-    l.blocks.forEach((b) => {
+    l.blocks.forEach((b, bi) => {
       see(b.id);
       const media = MEDIA_WORDS[b.type];
 
       if (media && 'url' in b) {
         if (!b.url.trim()) out.push(`${media} in ${name} needs a link.`);
-        else if (!urlAllowed(b.url) || (b.type === 'embed' && !/^https:\/\//i.test(b.url.trim()))) {
-          out.push(`${media} in ${name} needs a link that starts with https://.`);
-        }
+        else if (b.type === 'embed') {
+          if (!embedKind(b.url)) out.push(embedNotAllowed(`block ${bi + 1} of ${serverLessonName(i, l.title)}`));
+        } else if (!urlAllowed(b.url)) out.push(`${media} in ${name} needs a link that starts with https://.`);
       }
 
       if (b.type === 'knowledge_check') questionProblems(b.question, `A knowledge check in ${name}`, out);
@@ -1498,11 +1558,37 @@ export function plural(n: number, one: string, many = `${one}s`) {
 }
 
 // ---------------------------------------------------------------------------
-// Progress event queue (kept in localStorage so nothing is lost if the tab closes or the network drops)
+// Progress event queue (kept in localStorage so nothing is lost if the tab closes or the network drops). Each
+// person has their own queue, so on a shared computer nobody's progress is ever sent as someone else's.
 // ---------------------------------------------------------------------------
 
+const QUEUE_PREFIX = 'carehub-learning-queue:';
 const memoryQueues = new Map<string, LearnEvent[]>();
-const queueKey = (ws: string, courseId: string) => `carehub-learning-queue:${ws}:${courseId}`;
+let tidiedFor = '';
+
+/** Who is signed in on this browser (the person id in the sign-in token), or '' when nobody is or it isn't known. */
+export function signedInPerson(): string {
+  try {
+    const t = getTokenParsed() as { access_token?: unknown; user?: { id?: unknown } } | null;
+    const id = t && typeof t.access_token === 'string' && t.access_token && typeof t.user?.id === 'string' ? t.user.id.trim() : '';
+
+    return /^[A-Za-z0-9_-]{1,80}$/.test(id) ? id : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * This person's queue for a course: `carehub-learning-queue:<person>:<workspace>:<course>`. When the person isn't known
+ * it's kept in memory only: still sent while the tab is open, never saved on the computer.
+ */
+function queueFor(ws: string, courseId: string) {
+  const who = signedInPerson();
+
+  clearOtherQueues(who);
+
+  return { key: `${QUEUE_PREFIX}${who}:${ws}:${courseId}`, saved: Boolean(who) };
+}
 
 function isEvent(v: unknown): v is LearnEvent {
   const o = obj(v);
@@ -1511,32 +1597,61 @@ function isEvent(v: unknown): v is LearnEvent {
 }
 
 export function readQueue(ws: string, courseId: string): LearnEvent[] {
-  const key = queueKey(ws, courseId);
+  const { key, saved } = queueFor(ws, courseId);
 
-  try {
-    const raw = window.localStorage.getItem(key);
+  if (saved) {
+    try {
+      const raw = window.localStorage.getItem(key);
 
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
 
-      if (Array.isArray(parsed)) return parsed.filter(isEvent);
+        if (Array.isArray(parsed)) return parsed.filter(isEvent);
+      }
+    } catch {
+      // Storage blocked: fall back to memory.
     }
-  } catch {
-    // Storage blocked: fall back to memory.
   }
 
   return (memoryQueues.get(key) || []).slice();
 }
 
 export function writeQueue(ws: string, courseId: string, events: LearnEvent[]) {
-  const key = queueKey(ws, courseId);
+  const { key, saved } = queueFor(ws, courseId);
   const kept = events.length > 3000 ? events.slice(events.length - 3000) : events;
 
   memoryQueues.set(key, kept.slice());
+  if (!saved) return;
   try {
     if (kept.length) window.localStorage.setItem(key, JSON.stringify(kept));
     else window.localStorage.removeItem(key);
   } catch {
     // Storage full or blocked: the memory copy still gets sent while the tab is open.
+  }
+}
+
+/**
+ * Deletes every queue that isn't the signed-in person's (someone else's, or the old kind without a person), so it's
+ * never sent. Runs once per person per page: when My learning opens or a course first uses its queue. Does nothing
+ * while the person isn't known.
+ */
+function clearOtherQueues(who: string) {
+  if (!who || who === tidiedFor) return;
+  tidiedFor = who;
+  const mine = `${QUEUE_PREFIX}${who}:`;
+
+  [...memoryQueues.keys()].filter((key) => !key.startsWith(mine)).forEach((key) => memoryQueues.delete(key));
+  try {
+    const stale: string[] = [];
+
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+
+      if (key?.startsWith(QUEUE_PREFIX) && !(key.startsWith(mine) && key.split(':').length === 4)) stale.push(key);
+    }
+
+    stale.forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // Storage blocked: nothing was stored.
   }
 }

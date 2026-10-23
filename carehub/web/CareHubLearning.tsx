@@ -220,7 +220,7 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
         <div className='mt-3 text-lg font-semibold'>No courses yet</div>
         <p className='mx-auto mt-1 max-w-[420px] text-sm text-text-secondary'>
           {canBuild
-            ? 'Create the first one in Studio — start from a preset or from the example course.'
+            ? 'Create the first one in Studio — start from a preset or from one of the example courses.'
             : 'When someone publishes a course, it will show up here.'}
         </p>
         {canBuild && (
