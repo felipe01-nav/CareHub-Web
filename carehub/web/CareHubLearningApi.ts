@@ -1387,16 +1387,27 @@ export function embedNotAllowed(at: string) {
   return `The embed in ${at} can only show ${EMBED_SITES}. For other websites, add a link instead.`;
 }
 
+/** A control character (U+0000-U+001F or U+007F) anywhere, as the server checks. Browsers drop tabs and line breaks. */
+export function hasControlChar(s: string) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+
+  return false;
+}
+
 /**
  * How an embed link may be shown: 'frame' (a site in the list), 'video' (YouTube, Vimeo or Loom) or null for anything
  * else — then learners get an "Open ↗" link instead. Only plain https:// links to a listed site count: no port, no
- * user@, never Care Hub itself or a relative link.
+ * "@" or control character anywhere (like the server), never Care Hub itself or a relative link.
  */
 export function embedKind(url: string): 'frame' | 'video' | null {
   const u = url.trim();
   const m = /^https:\/\/([^/?#]*)/i.exec(u);
 
-  if (!m || /\s/.test(u)) return null;
+  if (!m || url.includes('@') || hasControlChar(url) || /\s/.test(u)) return null;
   const host = m[1].toLowerCase();
   const kind = (EMBED_HOSTS.frame as readonly string[]).includes(host) ? 'frame' : (EMBED_HOSTS.video as readonly string[]).includes(host) ? 'video' : null;
 
@@ -1424,10 +1435,12 @@ function serverLessonName(index: number, title: string) {
 export function urlAllowed(url: string) {
   const u = url.trim();
 
-  if (!u) return false;
+  // Like the server: no control characters anywhere ("/<tab>/host" would open another website), and "//host" or
+  // "/\host" is another website to a browser, not a Care Hub link.
+  if (!u || hasControlChar(url)) return false;
   if (/^https:\/\/\S+$/i.test(u)) return true;
   if (/^http:\/\/localhost(:\d+)?(\/\S*)?$/i.test(u)) return true;
-  return u.startsWith('/') && !u.startsWith('//');
+  return u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\');
 }
 
 function questionProblems(q: Question, label: string, out: string[]) {

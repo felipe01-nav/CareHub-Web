@@ -13,6 +13,7 @@ import {
   correctAnswerOf,
   embedKind,
   gradeQuestion,
+  hasControlChar,
   hashString,
   isAnswered,
   matchingRights,
@@ -144,8 +145,10 @@ const INLINE_SOURCE = String.raw`\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*|\[([^\]\n]+)\
 export function safeHref(url: string): string | null {
   const u = url.trim();
 
+  // Same rule as urlAllowed: no control characters anywhere, and "//host" or "/\host" is another website.
+  if (hasControlChar(url)) return null;
   if (/^https?:\/\/\S+$/i.test(u) || /^mailto:\S+$/i.test(u)) return u;
-  if (u.startsWith('/') && !u.startsWith('//')) return u;
+  if (u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\')) return u;
   return null;
 }
 
