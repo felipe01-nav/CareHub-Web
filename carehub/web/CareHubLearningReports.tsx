@@ -1,6 +1,7 @@
-// CareHub Learning: course reports. Who has started, finished or not yet opened each course, how the quiz
-// questions are going, and the same view per person, with CSV export. Open to people with the "See course
-// reports" or "Build courses" permission; only people who can build courses can reset someone's progress.
+// CareHub Learning: course reports. Who has started, finished or not yet opened each course, where people stop,
+// how the quiz questions (and the answers people pick) and knowledge checks are going, and the same view per
+// person, with CSV export. Open to people with the "See course reports" or "Build courses" permission; only
+// people who can build courses can reset someone's progress.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ReactNode } from 'react';
@@ -82,6 +83,81 @@ export interface CourseReport {
   rows: CourseReportRow[];
   not_started: ReportPerson[];
   questions: QuestionStat[];
+}
+
+/**
+ * One answer to a quiz question and how many attempts picked it. Matching questions have one row per pair
+ * ("left → right"), counted when it was matched right; the newer kinds use buckets such as "Right order".
+ */
+export interface AnswerStat {
+  id: string;
+  text: string;
+  correct: boolean;
+  picked: number;
+}
+
+export interface QuestionInsight {
+  id: string;
+  prompt: string;
+  kind: string;
+  answered: number;
+  correct_pct: number;
+  answers: AnswerStat[];
+}
+
+export interface KnowledgeCheckStat {
+  block_id: string;
+  lesson_id: string;
+  lesson_title: string;
+  prompt: string;
+  answered: number;
+  correct_pct: number;
+}
+
+/** One lesson, in course order: who opened it, who finished it, and who is partway through the course on it now. */
+export interface LessonStop {
+  id: string;
+  title: string;
+  opened: number;
+  done: number;
+  stopped_here: number;
+}
+
+export interface DueInfo {
+  uid: string;
+  due_ms: number | null;
+  required: boolean;
+  overdue: boolean;
+  assigned_ms: number;
+}
+
+export interface GroupStat {
+  id: string;
+  name: string;
+  members: number;
+  assigned: number;
+  finished: number;
+  in_progress: number;
+  not_started: number;
+  overdue: number;
+}
+
+export interface CertificateInfo {
+  uid: string;
+  code: string;
+  issued_ms: number;
+}
+
+/** Extra detail for one course report. Older servers don't have it, and then the report simply leaves it out. */
+export interface CourseInsights {
+  assigned: number;
+  overdue: number;
+  due: DueInfo[];
+  questions: QuestionInsight[];
+  knowledge_checks: KnowledgeCheckStat[];
+  lessons: LessonStop[];
+  groups: GroupStat[];
+  certificates: CertificateInfo[];
 }
 
 export interface PersonSummary extends ReportPerson {
@@ -239,6 +315,100 @@ function personReportOf(v: unknown, uid: string): PersonReport {
   };
 }
 
+/** The entries of a list that are objects; anything else is left out. */
+function objects(v: unknown): unknown[] {
+  return arr(v).filter((x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x));
+}
+
+/** A count of people or attempts: a whole number, never below zero. */
+function countOf(v: unknown) {
+  return Math.max(0, Math.round(num(v)));
+}
+
+function percentOf(v: unknown) {
+  return Math.max(0, Math.min(100, Math.round(num(v))));
+}
+
+function groupStatOf(v: unknown): GroupStat {
+  const o = obj(v);
+
+  return {
+    id: str(o.id),
+    name: str(o.name).trim() || 'Unnamed group',
+    members: countOf(o.members),
+    assigned: countOf(o.assigned),
+    finished: countOf(o.finished),
+    in_progress: countOf(o.in_progress),
+    not_started: countOf(o.not_started),
+    overdue: countOf(o.overdue),
+  };
+}
+
+function insightsOf(v: unknown): CourseInsights {
+  const o = obj(v);
+
+  return {
+    assigned: countOf(o.assigned),
+    overdue: countOf(o.overdue),
+    due: arr(o.due)
+      .map((d): DueInfo => {
+        const x = obj(d);
+
+        return { uid: uidOf(x.uid), due_ms: numOrNull(x.due_ms), required: x.required === true, overdue: x.overdue === true, assigned_ms: num(x.assigned_ms) };
+      })
+      .filter((d) => d.uid),
+    questions: objects(o.questions).map((q, i): QuestionInsight => {
+      const x = obj(q);
+
+      return {
+        id: str(x.id) || `q${i}`,
+        prompt: str(x.prompt),
+        kind: str(x.kind),
+        answered: countOf(x.answered),
+        correct_pct: percentOf(x.correct_pct),
+        answers: objects(x.answers).map((a, j): AnswerStat => {
+          const y = obj(a);
+
+          return { id: str(y.id) || `a${j}`, text: str(y.text), correct: y.correct === true, picked: countOf(y.picked) };
+        }),
+      };
+    }),
+    knowledge_checks: objects(o.knowledge_checks).map((k, i): KnowledgeCheckStat => {
+      const x = obj(k);
+
+      return {
+        block_id: str(x.block_id) || `kc${i}`,
+        lesson_id: str(x.lesson_id),
+        lesson_title: str(x.lesson_title).trim(),
+        prompt: str(x.prompt),
+        answered: countOf(x.answered),
+        correct_pct: percentOf(x.correct_pct),
+      };
+    }),
+    lessons: objects(o.lessons).map((l, i): LessonStop => {
+      const x = obj(l);
+
+      return {
+        id: str(x.id) || `l${i}`,
+        title: str(x.title).trim(),
+        opened: countOf(x.opened),
+        done: countOf(x.done),
+        stopped_here: countOf(x.stopped_here),
+      };
+    }),
+    groups: arr(o.groups)
+      .map(groupStatOf)
+      .filter((g) => g.id),
+    certificates: arr(o.certificates)
+      .map((c): CertificateInfo => {
+        const x = obj(c);
+
+        return { uid: uidOf(x.uid), code: str(x.code).trim(), issued_ms: num(x.issued_ms) };
+      })
+      .filter((c) => c.uid && c.code),
+  };
+}
+
 const reportsBase = (ws: string) => `${CH_API}/${ws}/learning/reports`;
 const enc = encodeURIComponent;
 
@@ -250,6 +420,8 @@ export const reportsApi = {
         .filter((c) => c.id)
     ),
   course: (ws: string, id: string) => chCall<unknown>('get', `${reportsBase(ws)}/courses/${enc(id)}`).then((d) => courseReportOf(d, id)),
+  /** Answers per quiz question, knowledge checks, where people stop, due dates and groups (servers before Phase 2 answer 404). */
+  insights: (ws: string, id: string) => chCall<unknown>('get', `${reportsBase(ws)}/courses/${enc(id)}/insights`).then(insightsOf),
   people: (ws: string) =>
     chCall<unknown>('get', `${reportsBase(ws)}/people`).then((d) =>
       arr(obj(d).people)
@@ -355,6 +527,15 @@ function matches(p: { name: string; email: string }, query: string) {
   const q = query.trim().toLowerCase();
 
   return !q || `${p.name} ${p.email}`.toLowerCase().includes(q);
+}
+
+/** Course text without its formatting marks (**bold**, *italic*, [link](url)), for CSV files. */
+function plainText(text: string) {
+  return text
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+    .replace(/\*([^*\n]+?)\*/g, '$1')
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '$1')
+    .trim();
 }
 
 function statusLabel(p: { status: LearnStatus; awaiting_ack?: boolean } | null) {
@@ -499,6 +680,7 @@ function ReportTable<T>({
   actions,
   empty,
   testId,
+  rowTestId = 'carehub-learning-report-row',
 }: {
   rows: T[];
   cols: Col<T>[];
@@ -507,6 +689,7 @@ function ReportTable<T>({
   actions?: (row: T) => ReactNode;
   empty: ReactNode;
   testId?: string;
+  rowTestId?: string;
 }) {
   const [measure, narrow] = useNarrow(620);
   const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
@@ -580,7 +763,7 @@ function ReportTable<T>({
             const extra = actions?.(row);
 
             return (
-              <li key={rowKey(row)} className='rounded-[12px] border border-border-primary p-3' data-testid='carehub-learning-report-row'>
+              <li key={rowKey(row)} className='rounded-[12px] border border-border-primary p-3' data-testid={rowTestId}>
                 <div className='flex items-start gap-2'>
                   <div className='min-w-0 flex-1'>
                     {onOpen ? (
@@ -658,7 +841,7 @@ function ReportTable<T>({
                 key={rowKey(row)}
                 className={cn('border-t border-border-primary', onOpen && 'cursor-pointer hover:bg-fill-content-hover')}
                 onClick={onOpen ? () => openRow(row) : undefined}
-                data-testid='carehub-learning-report-row'
+                data-testid={rowTestId}
               >
                 {cols.map((c, i) => {
                   const v = c.cell(row);
@@ -758,15 +941,26 @@ function DownloadIcon() {
   );
 }
 
-function CsvButton({ onClick }: { onClick: () => void }) {
+function CsvButton({
+  onClick,
+  title = 'Everything in this report, whatever is filtered, as a file for Excel or Google Sheets',
+  ariaLabel,
+  testId = 'carehub-learning-csv',
+}: {
+  onClick: () => void;
+  title?: string;
+  ariaLabel?: string;
+  testId?: string;
+}) {
   return (
     <Button
       type='button'
       size='sm'
       variant='outline'
       onClick={onClick}
-      title='Everything in this report, whatever is filtered, as a file for Excel or Google Sheets'
-      data-testid='carehub-learning-csv'
+      title={title}
+      aria-label={ariaLabel}
+      data-testid={testId}
     >
       <span className='inline-flex items-center gap-1.5'>
         <DownloadIcon />
@@ -1171,6 +1365,10 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
   const navigate = useNavigate();
   const load = useCallback(() => reportsApi.course(workspaceId, courseId), [workspaceId, courseId]);
   const { data, error, reload } = useLoad(load);
+  // Extra detail from newer servers. Loaded on its own so it never holds up or breaks the report above:
+  // if it isn't there (or fails), those parts are simply left out.
+  const loadInsights = useCallback(() => reportsApi.insights(workspaceId, courseId).catch((): CourseInsights | null => null), [workspaceId, courseId]);
+  const { data: insights, reload: reloadInsights } = useLoad(loadInsights);
   const [filter, setFilter] = useState<CourseFilter>('all');
   const [query, setQuery] = useState('');
   const [resetting, setResetting] = useState<CourseReportRow | null>(null);
@@ -1324,7 +1522,11 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
         />
       </ChSection>
 
-      {quiz && <QuestionStats questions={questions} version={course.version} />}
+      {insights && insights.lessons.length > 0 && <WherePeopleStop lessons={insights.lessons} courseTitle={course.title} />}
+
+      {quiz && <QuestionStats questions={questions} version={course.version} details={insights ? insights.questions : null} courseTitle={course.title} />}
+
+      {insights && insights.knowledge_checks.length > 0 && <KnowledgeChecks checks={insights.knowledge_checks} />}
 
       {resetting && (
         <ResetDialog
@@ -1338,6 +1540,7 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
             setNotice(`${nameOf(resetting)}’s progress was reset. They’ll start “${course.title}” from the beginning next time.`);
             setResetting(null);
             reload();
+            reloadInsights();
           }}
         />
       )}
@@ -1345,8 +1548,122 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
   );
 }
 
-function QuestionStats({ questions, version }: { questions: QuestionStat[]; version: number }) {
+/** Lowest share of right answers first; questions no one has answered yet go last. */
+function hardness(q: { answered: number; correct_pct: number }) {
+  return q.answered > 0 ? q.correct_pct : 101;
+}
+
+/** What the bars under a question count, in words. */
+function answersCaption(kind: string) {
+  if (kind === 'multiple') return 'What people picked. They could pick more than one answer, so this can add up to more than 100%.';
+  if (kind === 'matching') return 'How often each pair was matched right.';
+  if (kind === 'fill_blank') return 'What people typed, most common first.';
+  if (kind === 'ordering') return 'How often the items were put in the right order.';
+  if (kind === 'hotspot') return 'Where people clicked on the picture.';
+  return 'What people picked.';
+}
+
+/** Picks of the most popular wrong answer, when there are at least two wrong answers to compare (0 = none to point out). */
+function commonWrongPicks(q: QuestionInsight) {
+  const wrong = q.answers.filter((a) => !a.correct && a.id !== 'other');
+
+  return wrong.length >= 2 ? Math.max(...wrong.map((a) => a.picked)) : 0;
+}
+
+function AnswerBreakdown({ q, n }: { q: QuestionInsight; n: number }) {
+  const top = commonWrongPicks(q);
+  const typed = q.kind === 'fill_blank';
+
+  return (
+    <div className='mt-3 max-w-[760px]' data-testid='carehub-learning-report-answers'>
+      <div className='mb-1.5 text-xs text-text-tertiary'>{answersCaption(q.kind)}</div>
+      <ul className='m-0 flex list-none flex-col gap-1.5 p-0' aria-label={`Question ${n}: answers`}>
+        {q.answers.map((a, i) => {
+          const share = pct(a.picked, q.answered);
+          const common = top > 0 && !a.correct && a.id !== 'other' && a.picked === top;
+
+          return (
+            <li key={`${a.id}-${i}`} className='flex flex-wrap items-center gap-x-3 gap-y-1' data-testid='carehub-learning-report-answer'>
+              <span className='flex min-w-0 flex-1 basis-[220px] items-start gap-1.5 text-sm text-text-primary'>
+                <span aria-hidden='true' className={cn('w-4 shrink-0 text-center font-semibold', a.correct ? 'chl-mark-right' : 'text-text-tertiary')}>
+                  {a.correct ? '✓' : '·'}
+                </span>
+                <span className='min-w-0'>
+                  {a.correct && <span className='sr-only'>Right answer: </span>}
+                  {typed ? (
+                    <span className='whitespace-pre-wrap break-words'>{a.text.trim() || '(left blank)'}</span>
+                  ) : (
+                    <RichText text={a.text.trim() || 'Untitled answer'} />
+                  )}
+                  {common && (
+                    <span className='ml-1.5 inline-block align-middle'>
+                      <Chip tone='amber'>Most common wrong answer</Chip>
+                    </span>
+                  )}
+                </span>
+              </span>
+              <span className='flex shrink-0 items-center gap-2 pl-[22px] sm:pl-0'>
+                <span className='chl-track block h-1.5 w-24 overflow-hidden rounded-full' aria-hidden='true'>
+                  <span
+                    className={cn('block h-full rounded-full', a.correct && 'chl-fill')}
+                    style={a.correct ? { width: `${share}%` } : { width: `${share}%`, background: common ? '#f59e0b' : 'rgba(127,127,127,.6)' }}
+                  />
+                </span>
+                <span className='w-[124px] whitespace-nowrap text-xs tabular-nums text-text-secondary'>
+                  {share}% · {a.picked} of {q.answered}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function QuestionStats({
+  questions,
+  version,
+  details,
+  courseTitle,
+}: {
+  questions: QuestionStat[];
+  version: number;
+  /** How often each answer was picked (newer servers); null leaves that out. */
+  details: QuestionInsight[] | null;
+  courseTitle: string;
+}) {
+  const [hardest, setHardest] = useState(false);
   const anyAnswers = questions.some((q) => q.answered > 0);
+  const byId = useMemo(() => new Map((details || []).map((d) => [d.id, d])), [details]);
+  const numbered = useMemo(() => questions.map((q, i) => ({ q, n: i + 1 })), [questions]);
+  const ordered = useMemo(() => (hardest ? [...numbered].sort((a, b) => hardness(a.q) - hardness(b.q) || a.n - b.n) : numbered), [numbered, hardest]);
+  const hasDetails = byId.size > 0;
+  const canSort = hasDetails && questions.filter((q) => q.answered > 0).length > 1;
+
+  const csv = () => {
+    const lines: CsvValue[][] = [];
+
+    numbered.forEach(({ q, n }) => {
+      const d = byId.get(q.id);
+
+      d?.answers.forEach((a) => {
+        lines.push([
+          n,
+          plainText(q.prompt) || 'Untitled question',
+          d.kind === 'fill_blank' ? a.text.trim() : plainText(a.text),
+          a.correct ? 'Yes' : 'No',
+          a.picked,
+          pct(a.picked, d.answered),
+        ]);
+      });
+    });
+    downloadCsv(
+      `question-details-${slug(courseTitle, 'course')}`,
+      ['Question no.', 'Question', 'Answer', 'Right answer?', 'Picked (attempts)', 'Picked (% of attempts)'],
+      lines
+    );
+  };
 
   return (
     <ChSection
@@ -1358,38 +1675,180 @@ function QuestionStats({ questions, version }: { questions: QuestionStat[]; vers
       }
     >
       {questions.length ? (
-        <ol className='m-0 flex list-none flex-col gap-2 p-0'>
-          {questions.map((q, i) => {
-            const missed = q.answered >= 3 && q.correct_pct < 50;
+        <>
+          {hasDetails && (
+            <Toolbar>
+              {canSort && (
+                <button
+                  type='button'
+                  aria-pressed={hardest}
+                  onClick={() => setHardest((h) => !h)}
+                  className={cn(
+                    'rounded-full border px-2.5 py-1 text-xs',
+                    hardest
+                      ? 'border-border-theme-thick font-medium text-text-primary'
+                      : 'border-border-primary text-text-secondary hover:bg-fill-content-hover'
+                  )}
+                  data-testid='carehub-learning-hardest-first'
+                >
+                  Hardest first
+                </button>
+              )}
+              <div className='flex-1' />
+              <CsvButton
+                onClick={csv}
+                title='Every answer to every quiz question and how often it was picked, as a file for Excel or Google Sheets'
+                ariaLabel='Download question details (CSV)'
+                testId='carehub-learning-csv-questions'
+              />
+            </Toolbar>
+          )}
+          <ol className='m-0 flex list-none flex-col gap-2 p-0'>
+            {ordered.map(({ q, n }) => {
+              const missed = q.answered >= 3 && q.correct_pct < 50;
+              const d = byId.get(q.id);
 
-            return (
-              <li key={q.id} className='rounded-[12px] border border-border-primary p-3' data-testid='carehub-learning-report-question'>
-                <div className='flex items-start gap-2'>
-                  <span className='w-6 shrink-0 text-sm tabular-nums text-text-tertiary'>{i + 1}.</span>
-                  <div className='min-w-0 flex-1'>
-                    <div className='text-sm text-text-primary'>
-                      <RichText text={q.prompt.trim() || 'Untitled question'} />
-                    </div>
-                    <div className='mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5'>
-                      <ProgressBar
-                        percent={q.answered ? q.correct_pct : 0}
-                        className='w-40 max-w-full'
-                        label={`Question ${i + 1}: answered correctly`}
-                      />
-                      <span className='text-xs text-text-secondary'>
-                        {q.answered ? `${q.correct_pct}% correct · ${plural(q.answered, 'answer')}` : 'No answers yet'}
-                      </span>
-                      {missed && <Chip tone='amber'>Often missed</Chip>}
+              return (
+                <li key={q.id} className='rounded-[12px] border border-border-primary p-3' data-testid='carehub-learning-report-question'>
+                  <div className='flex items-start gap-2'>
+                    <span className='w-6 shrink-0 text-sm tabular-nums text-text-tertiary'>{n}.</span>
+                    <div className='min-w-0 flex-1'>
+                      <div className='text-sm text-text-primary'>
+                        <RichText text={q.prompt.trim() || 'Untitled question'} />
+                      </div>
+                      <div className='mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5'>
+                        <ProgressBar percent={q.answered ? q.correct_pct : 0} className='w-40 max-w-full' label={`Question ${n}: answered correctly`} />
+                        <span className='text-xs text-text-secondary'>
+                          {q.answered ? `${q.correct_pct}% correct · ${plural(q.answered, 'answer')}` : 'No answers yet'}
+                        </span>
+                        {missed && <Chip tone='amber'>Often missed</Chip>}
+                      </div>
+                      {d && d.answered > 0 && d.answers.length > 0 && <AnswerBreakdown q={d} n={n} />}
                     </div>
                   </div>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+                </li>
+              );
+            })}
+          </ol>
+        </>
       ) : (
         <EmptyBox>This quiz has no questions.</EmptyBox>
       )}
+    </ChSection>
+  );
+}
+
+interface KcRow extends KnowledgeCheckStat {
+  /** Place in the course. */
+  n: number;
+}
+
+function KnowledgeChecks({ checks }: { checks: KnowledgeCheckStat[] }) {
+  const rows = useMemo(() => checks.map((k, n): KcRow => ({ ...k, n })).sort((a, b) => hardness(a) - hardness(b) || a.n - b.n), [checks]);
+  const cols = useMemo<Col<KcRow>[]>(
+    () => [
+      {
+        id: 'lesson',
+        label: 'Lesson',
+        sort: (r) => r.n,
+        cell: (r) => <span className='break-words text-text-primary'>{r.lesson_title || 'Untitled lesson'}</span>,
+      },
+      {
+        id: 'question',
+        label: 'Question',
+        sort: (r) => plainText(r.prompt).toLowerCase(),
+        cell: (r) => <RichText text={r.prompt.trim() || 'Untitled question'} className='text-text-primary' />,
+      },
+      { id: 'answered', label: 'Answered', right: true, sort: (r) => r.answered, cell: (r) => <Num n={r.answered} /> },
+      {
+        id: 'right',
+        label: '% right',
+        sort: (r) => (r.answered > 0 ? r.correct_pct : null),
+        cell: (r) => (r.answered > 0 ? <PercentCell percent={r.correct_pct} label={`${plainText(r.prompt) || 'Knowledge check'}: answered right`} /> : null),
+      },
+    ],
+    []
+  );
+
+  return (
+    <ChSection title='Knowledge checks' hint='Practice questions inside the lessons, hardest first. Each person’s latest answer counts.'>
+      <ReportTable
+        rows={rows}
+        cols={cols}
+        rowKey={(r) => `${r.block_id}-${r.n}`}
+        empty='This course has no knowledge checks.'
+        testId='carehub-learning-report-kcs'
+        rowTestId='carehub-learning-report-kc'
+      />
+    </ChSection>
+  );
+}
+
+interface StopRow extends LessonStop {
+  /** Place in the course. */
+  n: number;
+}
+
+function WherePeopleStop({ lessons, courseTitle }: { lessons: LessonStop[]; courseTitle: string }) {
+  const rows = useMemo(() => lessons.map((l, n): StopRow => ({ ...l, n })), [lessons]);
+  const most = rows.reduce((m, r) => Math.max(m, r.stopped_here), 0);
+  const cols = useMemo<Col<StopRow>[]>(
+    () => [
+      {
+        id: 'lesson',
+        label: 'Lesson',
+        sort: (r) => r.n,
+        cell: (r) => (
+          <span className='flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1'>
+            <span className='min-w-0 break-words font-medium text-text-primary'>
+              <span className='font-normal tabular-nums text-text-tertiary'>{r.n + 1}.</span> {r.title || 'Untitled lesson'}
+            </span>
+            {most > 0 && r.stopped_here === most && <Chip tone='amber'>Most people stop here</Chip>}
+          </span>
+        ),
+      },
+      { id: 'opened', label: 'Opened', right: true, sort: (r) => r.opened, cell: (r) => <Num n={r.opened} /> },
+      { id: 'done', label: 'Done', right: true, sort: (r) => r.done, cell: (r) => <Num n={r.done} /> },
+      {
+        id: 'stopped',
+        label: 'Stopped here',
+        right: true,
+        sort: (r) => r.stopped_here,
+        cell: (r) =>
+          most > 0 && r.stopped_here === most ? <span className='font-semibold tabular-nums text-text-primary'>{r.stopped_here}</span> : <Num n={r.stopped_here} />,
+      },
+    ],
+    [most]
+  );
+
+  const csv = () =>
+    downloadCsv(
+      `where-people-stop-${slug(courseTitle, 'course')}`,
+      ['Lesson no.', 'Lesson', 'Opened', 'Done', 'Stopped here'],
+      rows.map((r) => [r.n + 1, r.title || 'Untitled lesson', r.opened, r.done, r.stopped_here])
+    );
+
+  return (
+    <ChSection
+      title='Where people stop'
+      hint='Stopped here: people who started but haven’t finished, by the lesson they’re on now.'
+      right={
+        <CsvButton
+          onClick={csv}
+          title='Every lesson with how many people opened it, finished it and stopped there, as a file for Excel or Google Sheets'
+          ariaLabel='Download where people stop (CSV)'
+          testId='carehub-learning-csv-stops'
+        />
+      }
+    >
+      <ReportTable
+        rows={rows}
+        cols={cols}
+        rowKey={(r) => `${r.id}-${r.n}`}
+        empty='This course has no lessons.'
+        testId='carehub-learning-report-stops'
+        rowTestId='carehub-learning-report-stop'
+      />
     </ChSection>
   );
 }
