@@ -1,5 +1,5 @@
 // CareHub Learning: the /app/learning page. "My learning" (continue, finished, catalog), the course player,
-// and Studio for people who build courses. Course reports come in the next phase.
+// Studio for people who build courses, and Reports for people who can see course reports.
 import { Component, useEffect, useMemo, useState } from 'react';
 
 import type { ErrorInfo, ReactNode } from 'react';
@@ -13,6 +13,7 @@ import { carehubCan, formatWhen, lastWorkspaceId, UUID_RE, useCareHubMe } from '
 import { formatMinutes, isFinished, lapi, LEARNING_PATH, learningNotLive, lErrorText, plural, statusInfo } from './CareHubLearningApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
+import { LearningReportCourse, LearningReportPerson, LearningReportsCourses, LearningReportsPeople, REPORTS_PATH } from './CareHubLearningReports';
 import { LearningStudioEditor, LearningStudioHome } from './CareHubLearningStudio';
 import { chInputClass, ChNote, ChSection } from './CareHubUi';
 
@@ -289,20 +290,24 @@ function PlayerRoute({ workspaceId }: { workspaceId: string }) {
   return <CareHubLearningPlayer key={courseId} workspaceId={workspaceId} courseId={courseId} onExit={() => navigate(LEARNING_PATH)} />;
 }
 
-function BuildersOnly({ known, allowed, children }: { known: boolean; allowed: boolean; children: ReactNode }) {
+const STUDIO_ONLY = 'Studio is for people with the “Build courses” permission. Ask an admin if you need it.';
+const REPORTS_ONLY = 'Reports are for people with the “See course reports” or “Build courses” permission. Ask an admin if you need it.';
+
+function OnlyFor({ known, allowed, message, children }: { known: boolean; allowed: boolean; message: string; children: ReactNode }) {
   if (!known) return <div className='text-sm text-text-tertiary'>Loading…</div>;
-  if (!allowed) {
-    return <ChNote>Studio is for people with the “Build courses” permission. Ask an admin if you need it.</ChNote>;
-  }
+  if (!allowed) return <ChNote>{message}</ChNote>;
 
   return <>{children}</>;
 }
 
-function Tabs({ active, canBuild }: { active: 'home' | 'studio'; canBuild: boolean }) {
+type TabId = 'home' | 'studio' | 'reports';
+
+function Tabs({ active, canBuild, canReports }: { active: TabId; canBuild: boolean; canReports: boolean }) {
   const navigate = useNavigate();
-  const tabs: { id: 'home' | 'studio'; label: string; to: string }[] = [
+  const tabs: { id: TabId; label: string; to: string }[] = [
     { id: 'home', label: 'My learning', to: LEARNING_PATH },
     ...(canBuild ? [{ id: 'studio' as const, label: 'Studio', to: `${LEARNING_PATH}/studio` }] : []),
+    ...(canReports ? [{ id: 'reports' as const, label: 'Reports', to: REPORTS_PATH }] : []),
   ];
 
   if (tabs.length < 2) return null;
@@ -335,10 +340,13 @@ function LearningRoutes() {
   const location = useLocation();
   const known = Boolean(me);
   const canBuild = Boolean(me && !me.is_guest && carehubCan(me, 'learning_build'));
+  // Builders can always see reports for the courses they make.
+  const canReports = Boolean(me && !me.is_guest && (carehubCan(me, 'learning_build') || carehubCan(me, 'learning_analytics')));
   const rest = location.pathname.startsWith(LEARNING_PATH) ? location.pathname.slice(LEARNING_PATH.length) : '';
   const inStudio = /^\/studio(\/|$)/.test(rest);
   const inEditor = /^\/studio\/[^/]+/.test(rest);
   const inPlayer = /^\/course\//.test(rest);
+  const inReports = /^\/reports(\/|$)/.test(rest);
 
   useEffect(() => {
     document.title = 'Learning · Care Hub';
@@ -354,7 +362,7 @@ function LearningRoutes() {
 
   return (
     <div
-      className={cn('carehub-learning mx-auto w-full px-4 py-6 sm:px-8', inEditor ? 'max-w-[1240px]' : 'max-w-[1000px]')}
+      className={cn('carehub-learning mx-auto w-full px-4 py-6 sm:px-8', inEditor || inReports ? 'max-w-[1240px]' : 'max-w-[1000px]')}
       data-testid='carehub-learning'
     >
       {!inPlayer && !inEditor && (
@@ -362,7 +370,7 @@ function LearningRoutes() {
           <div className='mb-3 flex flex-wrap items-center gap-3'>
             <h1 className='flex-1 text-2xl font-semibold'>🎓 Learning</h1>
           </div>
-          <Tabs active={inStudio ? 'studio' : 'home'} canBuild={canBuild} />
+          <Tabs active={inStudio ? 'studio' : inReports ? 'reports' : 'home'} canBuild={canBuild} canReports={canReports} />
         </>
       )}
       {!workspaceId ? (
@@ -374,17 +382,49 @@ function LearningRoutes() {
           <Route
             path='studio'
             element={
-              <BuildersOnly known={known} allowed={canBuild}>
+              <OnlyFor known={known} allowed={canBuild} message={STUDIO_ONLY}>
                 <LearningStudioHome workspaceId={workspaceId} />
-              </BuildersOnly>
+              </OnlyFor>
             }
           />
           <Route
             path='studio/:courseId'
             element={
-              <BuildersOnly known={known} allowed={canBuild}>
+              <OnlyFor known={known} allowed={canBuild} message={STUDIO_ONLY}>
                 <LearningStudioEditor workspaceId={workspaceId} />
-              </BuildersOnly>
+              </OnlyFor>
+            }
+          />
+          <Route
+            path='reports'
+            element={
+              <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
+                <LearningReportsCourses workspaceId={workspaceId} canBuild={canBuild} />
+              </OnlyFor>
+            }
+          />
+          <Route
+            path='reports/course/:courseId'
+            element={
+              <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
+                <LearningReportCourse workspaceId={workspaceId} canBuild={canBuild} />
+              </OnlyFor>
+            }
+          />
+          <Route
+            path='reports/people'
+            element={
+              <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
+                <LearningReportsPeople workspaceId={workspaceId} />
+              </OnlyFor>
+            }
+          />
+          <Route
+            path='reports/people/:uid'
+            element={
+              <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
+                <LearningReportPerson workspaceId={workspaceId} />
+              </OnlyFor>
             }
           />
           <Route path='*' element={<Navigate to={LEARNING_PATH} replace />} />
