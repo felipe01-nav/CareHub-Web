@@ -1309,3 +1309,6 @@ EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
      "import CareHubPasswordGate from '@/components/carehub/CareHubPasswordGate';\n", 1),
     ("    <CareHubBackground />\n", "    <CareHubBackground />\n    <CareHubPasswordGate />\n", 1),
 ])
+
+# CareHub: Google Calendar through a Google Apps Script (no Google Cloud console).
+EXTRA_FILES[HERE / "web" / "CareHubGoogleScript.tsx"] = "src/components/carehub/CareHubGoogleScript.tsx"
