@@ -17,7 +17,14 @@ import { assignedDone } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
 import { LearningCertificate, LearningHeaderLinks, LearningMyCertificates, LearningVerify } from './CareHubLearningCertificate';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
-import { LearningReportCourse, LearningReportPerson, LearningReportsCourses, LearningReportsPeople, REPORTS_PATH } from './CareHubLearningReports';
+import {
+  LearningReportCourse,
+  LearningReportPerson,
+  LearningReportsCourses,
+  LearningReportsPeople,
+  LearningReportsTeams,
+  REPORTS_PATH,
+} from './CareHubLearningReports';
 import { LearningStudioEditor, LearningStudioHome } from './CareHubLearningStudio';
 import { chInputClass, ChNote, ChSection } from './CareHubUi';
 
@@ -447,6 +454,14 @@ function LearningRoutes() {
             element={
               <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
                 <LearningReportPerson workspaceId={workspaceId} />
+              </OnlyFor>
+            }
+          />
+          <Route
+            path='reports/teams'
+            element={
+              <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
+                <LearningReportsTeams workspaceId={workspaceId} />
               </OnlyFor>
             }
           />
