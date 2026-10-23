@@ -7,6 +7,7 @@ import { executeAPIRequest, getAxios } from '@/application/services/js-services/
 import { useCurrentWorkspaceId } from '@/components/app/app.hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { chErrorText } from './CareHubCore';
 
 export const CAREHUB_ACCOUNTS_ITEM = 'carehub_accounts';
 
@@ -52,9 +53,7 @@ function call<T>(method: 'get' | 'post' | 'put' | 'delete', url: string, data?: 
 }
 
 function errorText(err: unknown) {
-  const msg = (err as { message?: string })?.message;
-
-  return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
+  return chErrorText(err);
 }
 
 let adminCache: boolean | null = null;

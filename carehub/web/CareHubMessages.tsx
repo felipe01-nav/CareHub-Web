@@ -27,6 +27,7 @@ import {
   splitMessage,
   useSharablePages,
 } from './CareHubSharePage';
+import { chErrorText } from './CareHubCore';
 
 export const CAREHUB_MESSAGES_PATH = '/app/messages';
 const API = '/api/carehub/messages';
@@ -68,9 +69,7 @@ function call<T>(method: 'get' | 'post' | 'put' | 'delete', url: string, data?: 
 }
 
 function errorText(err: unknown) {
-  const msg = (err as { message?: string })?.message;
-
-  return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
+  return chErrorText(err);
 }
 
 export function personName(p: Person | null | undefined) {

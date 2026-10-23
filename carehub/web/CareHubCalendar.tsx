@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { expandIcs, IcsEvent, parseIcs } from './CareHubIcs';
 import { GoogleScriptConnect } from './CareHubGoogleScript';
 import { CareHubEventActions } from './CareHubMeetingNotes';
+import { chErrorText } from './CareHubCore';
 
 export const CAREHUB_CALENDAR_PATH = '/app/calendar';
 
@@ -214,9 +215,7 @@ function call<T>(method: 'get' | 'post' | 'put' | 'delete', url: string, data?: 
 }
 
 function errorText(err: unknown) {
-  const msg = (err as { message?: string })?.message;
-
-  return msg && msg.trim() ? msg : 'Something went wrong. Please try again.';
+  return chErrorText(err);
 }
 
 // ---------------------------------------------------------------------------
