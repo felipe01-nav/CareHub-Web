@@ -1,5 +1,5 @@
 // CareHub Learning: the course player. Learners take courses here; Studio uses the same screen to preview a
-// draft (no server calls, nothing saved). Progress events wait in a localStorage queue (per workspace +
+// draft (no server calls, nothing saved). Progress events wait in a localStorage queue (per person, workspace and
 // course) and are sent every ~15 s, on lesson change and when the tab is hidden, with retries — so a dropped
 // network never loses progress. Active time only counts while the page is visible, focused and in use
 // (or a video is playing).

@@ -11,7 +11,9 @@ import { cn } from '@/lib/utils';
 
 import {
   correctAnswerOf,
+  embedKind,
   gradeQuestion,
+  hasControlChar,
   hashString,
   isAnswered,
   matchingRights,
@@ -143,8 +145,10 @@ const INLINE_SOURCE = String.raw`\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*|\[([^\]\n]+)\
 export function safeHref(url: string): string | null {
   const u = url.trim();
 
+  // Same rule as urlAllowed: no control characters anywhere, and "//host" or "/\host" is another website.
+  if (hasControlChar(url)) return null;
   if (/^https?:\/\/\S+$/i.test(u) || /^mailto:\S+$/i.test(u)) return u;
-  if (u.startsWith('/') && !u.startsWith('//')) return u;
+  if (u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\')) return u;
   return null;
 }
 
@@ -411,14 +415,6 @@ function fileName(url: string) {
     return decodeURIComponent(last) || 'File';
   } catch {
     return last || 'File';
-  }
-}
-
-function sameOrigin(url: string) {
-  try {
-    return new URL(url, window.location.href).origin === window.location.origin;
-  } catch {
-    return false;
   }
 }
 
@@ -780,25 +776,8 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
       return <AudioBlock block={block} ctx={ctx} />;
     case 'file':
       return <FileBlock block={block} ctx={ctx} />;
-    case 'embed': {
-      if (!/^https:\/\/\S+$/i.test(block.url.trim())) {
-        return ctx.preview ? <Placeholder>Add an https:// link to embed it here.</Placeholder> : null;
-      }
-
-      const own = sameOrigin(block.url);
-
-      return (
-        <iframe
-          src={block.url.trim()}
-          title='Embedded content'
-          loading='lazy'
-          referrerPolicy='no-referrer'
-          sandbox={own ? 'allow-scripts allow-popups allow-forms' : 'allow-scripts allow-same-origin allow-popups allow-forms allow-presentation'}
-          className='w-full rounded-[10px] border border-border-primary'
-          style={{ height: Math.max(120, Math.min(2000, block.height || 480)) }}
-        />
-      );
-    }
+    case 'embed':
+      return <EmbedBlock block={block} ctx={ctx} />;
 
     case 'accordion':
       return <AccordionBlock block={block} />;
@@ -961,6 +940,84 @@ function FileBlock({ block, ctx }: { block: BlockOf<'file'>; ctx: BlockCtx }) {
   );
 }
 
+/** A YouTube, Vimeo or Loom player (the address comes from videoEmbedUrl). */
+function VideoFrame({ src, title }: { src: string; title: string }) {
+  return (
+    <div className='relative w-full overflow-hidden rounded-[10px] bg-black' style={{ paddingTop: '56.25%' }}>
+      <iframe src={src} title={title} className='absolute inset-0 h-full w-full' allow='autoplay; fullscreen; picture-in-picture; encrypted-media' allowFullScreen />
+    </div>
+  );
+}
+
+/** The address for an "Open ↗" link: web links and Care Hub links only (never javascript: and the like). */
+function openableHref(url: string) {
+  const u = url.trim();
+
+  if (!u || /\s/.test(u)) return '';
+  if (/^https?:\/\/[^/?#]/i.test(u)) return u;
+  return u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\') ? u : '';
+}
+
+/** The name on an "Open ↗" card: the website (without www.), or Care Hub for its own pages. */
+function siteName(href: string) {
+  try {
+    const parsed = new URL(href, window.location.href);
+
+    if (parsed.origin === window.location.origin) return 'A Care Hub page';
+    return parsed.hostname.replace(/^www\./i, '') || 'A website';
+  } catch {
+    return 'A website';
+  }
+}
+
+/**
+ * Embeds: YouTube, Vimeo and Loom play in the video player; the sites in EMBED_HOSTS show in a sandboxed frame. Anything
+ * else (Care Hub itself, relative and http links, ports, user@host, other websites) is never framed — learners see its
+ * name and an "Open ↗" link instead.
+ */
+function EmbedBlock({ block, ctx }: { block: BlockOf<'embed'>; ctx: BlockCtx }) {
+  const url = block.url.trim();
+  const kind = embedKind(url);
+  const video = kind === 'video' ? videoEmbedUrl(url) : null;
+
+  if (!url) return ctx.preview ? <Placeholder>Add a link to show it here — for example a Google Doc or Form, Canva, Miro or Figma.</Placeholder> : null;
+  if (video) return <VideoFrame src={video} title='Video' />;
+  if (kind === 'frame') {
+    return (
+      <iframe
+        src={url}
+        title='Embedded content'
+        loading='lazy'
+        referrerPolicy='no-referrer'
+        sandbox='allow-scripts allow-same-origin allow-popups allow-forms allow-presentation'
+        className='w-full rounded-[10px] border border-border-primary'
+        style={{ height: Math.max(120, Math.min(2000, block.height || 480)) }}
+      />
+    );
+  }
+
+  const href = openableHref(url);
+
+  if (!href) return ctx.preview ? <Placeholder>This link can’t be opened. Use a link that starts with https://.</Placeholder> : null;
+  const name = siteName(href);
+
+  return (
+    <div className='flex min-w-0 items-center gap-3 rounded-[10px] border border-border-primary px-3 py-2.5' data-testid='carehub-learning-embed-link'>
+      <span aria-hidden='true'>🔗</span>
+      <span className='min-w-0 flex-1 truncate text-sm font-medium'>{name}</span>
+      <a
+        href={href}
+        target='_blank'
+        rel='noopener noreferrer'
+        aria-label={`Open ${name} in a new tab`}
+        className='shrink-0 text-sm font-medium text-text-action hover:underline'
+      >
+        Open ↗
+      </a>
+    </div>
+  );
+}
+
 function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) {
   const embed = videoEmbedUrl(block.url);
   const file = useFileSrc(!embed && urlAllowed(block.url) ? block.url : '');
@@ -973,15 +1030,7 @@ function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) 
   if (embed) {
     return (
       <figure className='m-0'>
-        <div className='relative w-full overflow-hidden rounded-[10px] bg-black' style={{ paddingTop: '56.25%' }}>
-          <iframe
-            src={embed}
-            title={block.caption.trim() || 'Video'}
-            className='absolute inset-0 h-full w-full'
-            allow='autoplay; fullscreen; picture-in-picture; encrypted-media'
-            allowFullScreen
-          />
-        </div>
+        <VideoFrame src={embed} title={block.caption.trim() || 'Video'} />
         {caption}
       </figure>
     );
