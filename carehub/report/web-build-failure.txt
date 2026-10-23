@@ -1,0 +1,33 @@
+run 39981598223 commit 0b71882af334e447162b18eec150b6aa2e0b92b7
+build	Build the web app	﻿2026-10-23T15:50:04.0267428Z ##[group]Run cp deploy.env .env
+build	Build the web app	2026-10-23T15:50:04.0267773Z ^[[36;1mcp deploy.env .env^[[0m
+build	Build the web app	2026-10-23T15:50:04.0268025Z ^[[36;1mpnpm run build^[[0m
+build	Build the web app	2026-10-23T15:50:04.0268281Z ^[[36;1mtest -f dist/index.html^[[0m
+build	Build the web app	2026-10-23T15:50:04.0331585Z shell: /usr/bin/bash -e {0}
+build	Build the web app	2026-10-23T15:50:04.0331853Z env:
+build	Build the web app	2026-10-23T15:50:04.0332119Z   WEB_SOURCE_REF: 128e2d1df0407b2d65318a4e34855fcebc30fefd
+build	Build the web app	2026-10-23T15:50:04.0332559Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+build	Build the web app	2026-10-23T15:50:04.0332890Z   NODE_ENV: production
+build	Build the web app	2026-10-23T15:50:04.0333161Z   NODE_OPTIONS: --max-old-space-size=6144
+build	Build the web app	2026-10-23T15:50:04.0333568Z   APPFLOWY_WEB_VERSION: carehub-128e2d1df0407b2d65318a4e34855fcebc30fefd
+build	Build the web app	2026-10-23T15:50:04.0333965Z ##[endgroup]
+build	Build the web app	2026-10-23T15:50:04.3317053Z 
+build	Build the web app	2026-10-23T15:50:04.3317813Z > appflowy_web_app@0.0.0 build /home/runner/work/CareHub-Web/CareHub-Web/app
+build	Build the web app	2026-10-23T15:50:04.3318399Z > vite build
+build	Build the web app	2026-10-23T15:50:04.3318562Z 
+build	Build the web app	2026-10-23T15:50:04.7588150Z ^[[36mvite v6.4.2 ^[[32mbuilding for production...^[[36m^[[39m
+build	Build the web app	2026-10-23T15:50:05.0528696Z transforming...
+build	Build the web app	2026-10-23T15:50:05.0901042Z Browserslist: browsers data (caniuse-lite) is 10 months old. Please run:
+build	Build the web app	2026-10-23T15:50:05.0902096Z   npx update-browserslist-db@latest
+build	Build the web app	2026-10-23T15:50:05.0903167Z   Why you should do it regularly: https://github.com/browserslist/update-db#readme
+build	Build the web app	2026-10-23T15:50:06.7995230Z ^[[32m✓^[[39m 388 modules transformed.
+build	Build the web app	2026-10-23T15:50:06.8016827Z ^[[31m✗^[[39m Build failed in 2.02s
+build	Build the web app	2026-10-23T15:50:06.8017509Z ^[[31merror during build:
+build	Build the web app	2026-10-23T15:50:06.8018706Z ^[[31mCould not resolve "./CareHubGoogleScript" from "src/components/carehub/CareHubCalendar.tsx"^[[31m
+build	Build the web app	2026-10-23T15:50:06.8020384Z file: ^[[36m/home/runner/work/CareHub-Web/CareHub-Web/app/src/components/carehub/CareHubCalendar.tsx^[[31m
+build	Build the web app	2026-10-23T15:50:06.8021833Z     at getRollupError (file:///home/runner/work/CareHub-Web/CareHub-Web/app/node_modules/.pnpm/rollup@4.59.0/node_modules/rollup/dist/es/shared/parseAst.js:402:41)
+build	Build the web app	2026-10-23T15:50:06.8023057Z     at error (file:///home/runner/work/CareHub-Web/CareHub-Web/app/node_modules/.pnpm/rollup@4.59.0/node_modules/rollup/dist/es/shared/parseAst.js:398:42)
+build	Build the web app	2026-10-23T15:50:06.8024363Z     at ModuleLoader.handleInvalidResolvedId (file:///home/runner/work/CareHub-Web/CareHub-Web/app/node_modules/.pnpm/rollup@4.59.0/node_modules/rollup/dist/es/shared/node-entry.js:21710:24)
+build	Build the web app	2026-10-23T15:50:06.8025737Z     at file:///home/runner/work/CareHub-Web/CareHub-Web/app/node_modules/.pnpm/rollup@4.59.0/node_modules/rollup/dist/es/shared/node-entry.js:21670:26^[[39m
+build	Build the web app	2026-10-23T15:50:06.9108333Z  ELIFECYCLE  Command failed with exit code 1.
+build	Build the web app	2026-10-23T15:50:06.9323294Z ##[error]Process completed with exit code 1.
