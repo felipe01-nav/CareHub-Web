@@ -250,7 +250,13 @@ export function GoogleScriptConnect({
       setOpen(false);
       onConnected();
     } catch (err) {
-      setError(errorText(err));
+      const text = errorText(err);
+
+      setError(
+        /do not have permission to call|required permissions/i.test(text)
+          ? "Google hasn't let the script use your calendar yet. In Apps Script, click ▶ Run at the top of the code box, then Review permissions → your account → Allow. Then click Connect again."
+          : text
+      );
     } finally {
       setBusy(false);
     }
@@ -327,13 +333,15 @@ export function GoogleScriptConnect({
                 On the left, next to <b>Services</b>, click <b>+</b> → choose <b>Google Calendar API</b> → <b>Add</b>.
               </Step>
               <Step n={5}>
-                Top right: <b>Deploy → New deployment</b>. Click the ⚙ next to &quot;Select type&quot; → <b>Web app</b>.
-                Set <b>Execute as: Me</b> and <b>Who has access: Anyone</b>. Click <b>Deploy</b>.
+                At the top of the code box, click <b>▶ Run</b>. When Google asks, click <b>Review permissions</b>, pick
+                your account and click <b>Allow</b>. This lets the script use your calendar. If you see &quot;Google
+                hasn&apos;t verified this app&quot;, click <b>Advanced</b> → <b>Go to Care Hub Calendar</b> — it&apos;s your
+                own script.
               </Step>
               <Step n={6}>
-                Click <b>Authorize access</b>, pick your account and click <b>Allow</b>. If you see &quot;Google hasn&apos;t
-                verified this app&quot;, click <b>Advanced</b> → <b>Go to Care Hub Calendar</b> — it&apos;s your own
-                script.
+                Top right: <b>Deploy → New deployment</b>. Click the ⚙ next to &quot;Select type&quot; → <b>Web app</b>.
+                Set <b>Execute as: Me</b> and <b>Who has access: Anyone</b>. Click <b>Deploy</b> (and <b>Allow</b> again
+                if it asks).
               </Step>
               <Step n={7}>
                 Copy the <b>Web app URL</b> (it ends with <code>/exec</code>) and paste it here:
