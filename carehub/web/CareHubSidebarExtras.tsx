@@ -13,6 +13,7 @@ import { useCareHubCan, useCareHubMe } from './CareHubCore';
 import { TemplatesDialog } from './CareHubTemplates';
 
 const CreateSpaceModal = lazy(() => import('@/components/app/view-actions/CreateSpaceModal'));
+const CAREHUB_LEARNING_PATH = '/app/learning';
 
 function TemplateIcon() {
   return (
@@ -55,6 +56,7 @@ export function CareHubSidebarExtras({ onNavigate }: { onNavigate?: () => void }
   const location = useLocation();
   const canCreate = useCareHubCan(workspaceId, 'create');
   const canAnalytics = useCareHubCan(workspaceId, 'analytics');
+  const me = useCareHubMe(workspaceId);
   const [templatesOpen, setTemplatesOpen] = useState(false);
 
   if (!workspaceId) return null;
@@ -75,6 +77,24 @@ export function CareHubSidebarExtras({ onNavigate }: { onNavigate?: () => void }
           />
         )}
       </div>
+      {me && !me.is_guest && (
+        <div className='flex w-full items-center pb-1'>
+          <Row
+            icon={
+              <span aria-hidden='true' className='flex w-4 justify-center text-[14px] leading-none'>
+                🎓
+              </span>
+            }
+            label='Learning'
+            active={location.pathname.startsWith(CAREHUB_LEARNING_PATH)}
+            onClick={() => {
+              navigate(CAREHUB_LEARNING_PATH);
+              onNavigate?.();
+            }}
+            testId='carehub-learning-button'
+          />
+        </div>
+      )}
       {templatesOpen && (
         <TemplatesDialog
           workspaceId={workspaceId}
