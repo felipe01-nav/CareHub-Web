@@ -20,6 +20,7 @@ import {
   presetInfo,
   urlAllowed,
 } from './CareHubLearningApi';
+import { coerceInteractAnswer, InteractQuestionView, isInteractKind, LabeledGraphicView } from './CareHubLearningInteract';
 import { UUID_RE } from './CareHubCore';
 import { chInputClass } from './CareHubUi';
 
@@ -199,6 +200,7 @@ export function RichText({ text, className }: { text: string; className?: string
 // ---------------------------------------------------------------------------
 
 export function coerceAnswer(q: Question, raw: unknown): Answer | undefined {
+  if (isInteractKind(q.kind)) return coerceInteractAnswer(q, raw);
   if (q.kind === 'multiple') return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : undefined;
   if (q.kind === 'matching') {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
@@ -234,6 +236,22 @@ export function QuestionView({
   const multiple = q.kind === 'multiple';
   const hint =
     q.kind === 'multiple' ? 'Choose all that apply.' : q.kind === 'matching' ? 'Match each item with the right answer.' : '';
+
+  if (isInteractKind(q.kind)) {
+    return (
+      <InteractQuestionView
+        q={q}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        reveal={reveal}
+        name={name}
+        number={number}
+        Text={RichText}
+        useSrc={useFileSrc}
+      />
+    );
+  }
 
   return (
     <fieldset className='min-w-0'>
@@ -791,6 +809,8 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
       return <KnowledgeCheck block={block} ctx={ctx} />;
     case 'scenario':
       return <ScenarioBlock block={block} ctx={ctx} />;
+    case 'labeled_graphic':
+      return <LabeledGraphicView block={block} preview={ctx.preview} useSrc={useFileSrc} />;
     case 'page_link': {
       const ok = UUID_RE.test(block.view_id) && Boolean(ctx.workspaceId);
 

@@ -36,6 +36,7 @@ import {
   writeQueue,
 } from './CareHubLearningApi';
 import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
+import { isInteractKind } from './CareHubLearningInteract';
 import { ChNote } from './CareHubUi';
 
 import type {
@@ -724,7 +725,7 @@ function QuizView({
                       <RichText text={r.feedback} />
                     </div>
                   )}
-                  {r && !r.correct && r.correct_answer !== undefined && q.kind !== 'matching' && (
+                  {r && !r.correct && r.correct_answer !== undefined && q.kind !== 'matching' && !isInteractKind(q.kind) && (
                     <div className='mt-1 text-text-secondary'>Correct answer: {answerText(q, r.correct_answer) || '—'}</div>
                   )}
                   {r && r.explanation && (
