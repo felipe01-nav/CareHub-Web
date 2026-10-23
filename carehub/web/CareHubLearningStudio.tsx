@@ -34,6 +34,7 @@ import {
 } from './CareHubLearningApi';
 import { Chip, CourseCover } from './CareHubLearningBlocks';
 import { EXAMPLES } from './CareHubLearningExample';
+import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import {
   AddButton,
@@ -94,6 +95,7 @@ const QUESTION_BUTTONS: { value: QuestionKind; label: string }[] = [
   { value: 'multiple', label: 'Several right answers' },
   { value: 'true_false', label: 'True or false' },
   { value: 'matching', label: 'Matching' },
+  ...INTERACT_KIND_OPTIONS,
 ];
 
 function moveItem<T>(list: T[], from: number, to: number): T[] {

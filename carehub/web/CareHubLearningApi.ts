@@ -1,6 +1,24 @@
 // CareHub Learning: types, server calls and small helpers shared by the Learning screens
 // (My learning, the course player, Studio). The server lives in CareHub-Cloud `carehub_learning.rs`.
 import { chCall, chErrorText, CH_API } from './CareHubCore';
+import {
+  blankLabeledGraphic,
+  gradeInteract,
+  INTERACT_KINDS,
+  interactAnswered,
+  interactAnswerText,
+  interactCorrectAnswer,
+  interactFields,
+  interactQuestionProblems,
+  isInteractKind,
+  labeledGraphicProblems,
+  labeledGraphicSeconds,
+  normalizeLabeledGraphic,
+  toInteractKind,
+  withoutInteractFields,
+} from './CareHubLearningInteract';
+
+import type { InteractKind, InteractQuestionFields, LabeledGraphicBlock } from './CareHubLearningInteract';
 
 export const LEARNING_PATH = '/app/learning';
 export const DEFAULT_ACK = 'I have read and understood this course.';
@@ -14,12 +32,12 @@ export type Preset = 'standard' | 'scenario_lab' | 'required_read' | 'certificat
 export type Completion = 'all_lessons' | 'pass_quiz' | 'all_lessons_and_quiz';
 export type ShowAnswers = 'never' | 'after_submit' | 'after_pass';
 export type Tone = 'info' | 'tip' | 'warning' | 'success';
-export type QuestionKind = 'single' | 'multiple' | 'true_false' | 'matching';
+export type QuestionKind = 'single' | 'multiple' | 'true_false' | 'matching' | InteractKind;
 export type ImageWidth = 'small' | 'medium' | 'full';
 export type ListStyle = 'bullet' | 'number' | 'check';
 
 export const PRESET_IDS: Preset[] = ['standard', 'scenario_lab', 'required_read', 'certification', 'microlearning'];
-export const QUESTION_KINDS: QuestionKind[] = ['single', 'multiple', 'true_false', 'matching'];
+export const QUESTION_KINDS: QuestionKind[] = ['single', 'multiple', 'true_false', 'matching', ...INTERACT_KINDS];
 
 export interface QOption {
   id: string;
@@ -39,7 +57,7 @@ export interface QRight {
   text: string;
 }
 
-export interface Question {
+export interface Question extends InteractQuestionFields {
   id: string;
   kind: QuestionKind;
   prompt: string;
@@ -103,7 +121,8 @@ export type Block =
   | { id: string; type: 'continue'; label: string; require_complete: boolean }
   | { id: string; type: 'knowledge_check'; question: Question }
   | { id: string; type: 'scenario'; title: string; intro: string; start: string; steps: ScenarioStep[] }
-  | { id: string; type: 'page_link'; view_id: string; title: string };
+  | { id: string; type: 'page_link'; view_id: string; title: string }
+  | LabeledGraphicBlock;
 
 export type BlockType = Block['type'];
 export type BlockOf<T extends BlockType> = Extract<Block, { type: T }>;
@@ -128,6 +147,7 @@ export const BLOCK_TYPES: BlockType[] = [
   'continue',
   'knowledge_check',
   'scenario',
+  'labeled_graphic',
   'page_link',
 ];
 
@@ -477,6 +497,7 @@ export function normalizeQuestion(raw: unknown): Question {
     q.rights = arr(o.rights).map((x) => ({ token: str(obj(x).token), text: str(obj(x).text) }));
   }
 
+  Object.assign(q, interactFields(o, q.kind));
   return q;
 }
 
@@ -563,6 +584,8 @@ export function normalizeBlock(raw: unknown): Block | null {
           };
         }),
       };
+    case 'labeled_graphic':
+      return normalizeLabeledGraphic(o, id);
     case 'page_link':
       return { id, type: 'page_link', view_id: str(o.view_id), title: str(o.title) };
     default:
@@ -847,6 +870,9 @@ export function cloneBlock(b: Block): Block {
     case 'knowledge_check':
       copy.question = cloneQuestion(copy.question);
       break;
+    case 'labeled_graphic':
+      copy.markers = copy.markers.map((m) => ({ ...m, id: newId('m') }));
+      break;
     case 'scenario': {
       const map = new Map<string, string>();
 
@@ -873,6 +899,8 @@ export function cloneQuestion(q: Question): Question {
   copy.id = newId('q');
   copy.options = copy.options.map((o) => ({ ...o, id: newId('o') }));
   copy.pairs = copy.pairs.map((p) => ({ ...p, id: newId('p') }));
+  if (copy.items) copy.items = copy.items.map((it) => ({ ...it, id: newId('i') }));
+  if (copy.spots) copy.spots = copy.spots.map((sp) => ({ ...sp, id: newId('s') }));
   delete copy.rights;
   return copy;
 }
@@ -903,6 +931,7 @@ export function matchingRights(q: Question): QRight[] {
 }
 
 export function isAnswered(q: Question, a: Answer | undefined): boolean {
+  if (isInteractKind(q.kind)) return interactAnswered(q, a);
   if (q.kind === 'multiple') return Array.isArray(a) && a.length > 0;
   if (q.kind === 'matching') {
     if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
@@ -917,6 +946,7 @@ export function isAnswered(q: Question, a: Answer | undefined): boolean {
 /** Grades a full (not sanitized) question. All-or-nothing. */
 export function gradeQuestion(q: Question, a: Answer | undefined): boolean {
   if (!isAnswered(q, a)) return false;
+  if (isInteractKind(q.kind)) return gradeInteract(q, a);
   if (q.kind === 'multiple') {
     const want = q.options
       .filter((o) => o.correct)
@@ -944,6 +974,7 @@ export function gradeQuestion(q: Question, a: Answer | undefined): boolean {
 
 /** The correct answer of a full question, in Answer form (for showing after a check). */
 export function correctAnswerOf(q: Question): Answer {
+  if (isInteractKind(q.kind)) return interactCorrectAnswer(q);
   if (q.kind === 'multiple') return q.options.filter((o) => o.correct).map((o) => o.id);
   if (q.kind === 'matching') {
     const rights = matchingRights(q);
@@ -964,6 +995,7 @@ export function correctAnswerOf(q: Question): Answer {
 /** Words for a correct answer, e.g. "B and D" or "Refund → Billing team". */
 export function answerText(q: Question, a: Answer | undefined): string {
   if (a === undefined || a === null) return '';
+  if (isInteractKind(q.kind)) return interactAnswerText(q, a);
   if (q.kind === 'matching') {
     if (typeof a !== 'object' || Array.isArray(a)) return '';
     const rights = matchingRights(q);
@@ -1005,7 +1037,8 @@ export function blankQuestion(kind: QuestionKind): Question {
 
 /** Switches a question's kind, keeping what still makes sense. */
 export function setQuestionKind(q: Question, kind: QuestionKind): Question {
-  const next: Question = { ...q, kind };
+  if (isInteractKind(kind)) return toInteractKind(q, kind);
+  const next: Question = { ...withoutInteractFields(q), kind };
 
   if (kind === 'true_false') {
     const wasTrue = q.kind === 'true_false' ? q.options[0]?.correct !== false : true;
@@ -1219,6 +1252,8 @@ export function blankBlock(type: BlockType): Block {
       };
     }
 
+    case 'labeled_graphic':
+      return blankLabeledGraphic(id);
     case 'page_link':
     default:
       return { id, type: 'page_link', view_id: '', title: '' };
@@ -1328,6 +1363,9 @@ export function estimateMinutes(c: Content) {
         case 'page_link':
           lesson += 30;
           break;
+        case 'labeled_graphic':
+          lesson += labeledGraphicSeconds(b);
+          break;
         case 'knowledge_check':
           lesson += 30;
           break;
@@ -1372,6 +1410,11 @@ export function urlAllowed(url: string) {
 
 function questionProblems(q: Question, label: string, out: string[]) {
   if (!q.prompt.trim()) out.push(`${label} needs a question.`);
+  if (isInteractKind(q.kind)) {
+    interactQuestionProblems(q, label, out);
+    return;
+  }
+
   if (q.kind === 'matching') {
     if (q.pairs.length < 2) out.push(`${label} needs at least two pairs to match.`);
     if (q.pairs.some((p) => !p.left.trim() || !p.right.trim())) out.push(`${label} has a pair with an empty side.`);
@@ -1428,6 +1471,7 @@ export function validateContent(c: Content): string[] {
       }
 
       if (b.type === 'knowledge_check') questionProblems(b.question, `A knowledge check in ${name}`, out);
+      if (b.type === 'labeled_graphic') labeledGraphicProblems(b, name, out);
       if (b.type === 'scenario') {
         if (!b.steps.length) out.push(`A scenario in ${name} needs at least one step.`);
         else if (!b.steps.some((s) => s.id === b.start)) out.push(`A scenario in ${name} needs a first step.`);

@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { chErrorText } from './CareHubCore';
 import { clampInt, newId, setQuestionKind, urlAllowed } from './CareHubLearningApi';
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
+import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
 
@@ -29,6 +30,7 @@ import type {
   TextItem,
   Tone,
 } from './CareHubLearningApi';
+import type { PictureField } from './CareHubLearningInteract';
 
 // ---------------------------------------------------------------------------
 // The block library
@@ -54,13 +56,14 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
   continue: { emoji: '⏬', label: 'Continue button', hint: 'Shows the rest of the lesson one step at a time' },
   knowledge_check: { emoji: '✅', label: 'Knowledge check', hint: 'A practice question with instant feedback' },
   scenario: { emoji: '💬', label: 'Scenario', hint: 'A branching conversation to practice' },
+  labeled_graphic: LABELED_GRAPHIC_INFO,
   page_link: { emoji: '🔗', label: 'Care Hub page', hint: 'A link to a page in this workspace' },
 };
 
 export const BLOCK_GROUPS: { title: string; types: BlockType[] }[] = [
   { title: 'Text', types: ['heading', 'paragraph', 'statement', 'quote', 'callout', 'list', 'divider'] },
   { title: 'Media', types: ['image', 'video', 'audio', 'file', 'embed'] },
-  { title: 'Interactive', types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'continue'] },
+  { title: 'Interactive', types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'labeled_graphic', 'continue'] },
   { title: 'Links', types: ['page_link'] },
 ];
 
@@ -866,7 +869,12 @@ const KIND_OPTIONS: { value: QuestionKind; label: string }[] = [
   { value: 'multiple', label: 'Several right answers' },
   { value: 'true_false', label: 'True or false' },
   { value: 'matching', label: 'Match the pairs' },
+  ...INTERACT_KIND_OPTIONS,
 ];
+
+const pictureField: PictureField = (value, onChange) => (
+  <MediaField kind='image' label='Picture' value={value} onChange={onChange} hint='Upload a picture (up to 10 MB) or paste a link.' />
+);
 
 export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange: (q: Question) => void; inQuiz?: boolean }) {
   const set = (patch: Partial<Question>) => onChange({ ...q, ...patch });
@@ -890,9 +898,13 @@ export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange:
           </Field>
         )}
       </div>
-      <Field label='Question'>
-        <TextBox value={q.prompt} rows={2} onChange={(v) => set({ prompt: v })} placeholder='What should the learner answer?' />
-      </Field>
+      {isInteractKind(q.kind) ? (
+        <InteractQuestionEditor q={q} onChange={onChange} pictureField={pictureField} useSrc={useFileSrc} />
+      ) : (
+        <Field label='Question'>
+          <TextBox value={q.prompt} rows={2} onChange={(v) => set({ prompt: v })} placeholder='What should the learner answer?' />
+        </Field>
+      )}
 
       {(q.kind === 'single' || q.kind === 'multiple') && (
         <div className='flex flex-col gap-1.5'>
@@ -1495,6 +1507,8 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
       return <QuestionEditor q={block.question} onChange={(question) => onChange({ ...block, question })} />;
     case 'scenario':
       return <ScenarioEditor block={block} onChange={onChange} />;
+    case 'labeled_graphic':
+      return <LabeledGraphicEditor block={block} onChange={onChange} pictureField={pictureField} useSrc={useFileSrc} />;
     case 'page_link':
       return <PageLinkEditor block={block} onChange={onChange} />;
     default:

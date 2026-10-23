@@ -1318,6 +1318,7 @@ for _name in [
     "CareHubLearningApi.ts", "CareHubLearning.tsx", "CareHubLearningBlocks.tsx", "CareHubLearningPlayer.tsx",
     "CareHubLearningStudio.tsx", "CareHubLearningStudioBlocks.tsx", "CareHubLearningExample.ts",
     "CareHubLearningReports.tsx",
+    "CareHubLearningInteract.tsx",
 ]:
     EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
 
