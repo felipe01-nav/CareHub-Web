@@ -2079,15 +2079,11 @@ function GoogleSection({
           className='mt-1 w-full rounded-[8px] px-2 py-1.5 text-left text-sm text-text-secondary hover:bg-fill-content-hover hover:text-text-primary'
           data-testid='carehub-google-connect'
         >
-          {busy ? 'Opening Google…' : '+ Connect Google Calendar (private)'}
+          {busy ? 'Opening Google…' : '+ Connect Google Calendar'}
         </button>
       )}
-      {status.script && (
-        <GoogleScriptConnect
-          apiBase={API}
-          onConnected={() => void reloadStatus()}
-          label={oauth ? '+ Work account? Connect with a Google script' : undefined}
-        />
+      {status.script && !oauth && (
+        <GoogleScriptConnect apiBase={API} onConnected={() => void reloadStatus()} />
       )}
       {error && <div className='px-2 pb-1 text-xs text-text-error'>{error}</div>}
     </div>
