@@ -232,7 +232,7 @@ export function GoogleScriptConnect({
     if (k.length < 16) {
       setError(
         k
-          ? `The script password is only ${k.length} characters, so part of it is missing. In Apps Script, click three times on the line const CAREHUB_KEY = '…' to select the whole line, copy it (⌘C) and paste it in the Script password box above (⌘V).`
+          ? `The script password needs at least 16 characters, and this one has ${k.length}. It must be the same as the one on the line const CAREHUB_KEY = '…' in Apps Script. If you made your own, make it longer in both places (then Deploy > Manage deployments > New version). If you pasted it, copy the whole line.`
           : "Care Hub doesn't know your script's password. In Apps Script, click three times on the line const CAREHUB_KEY = '…' to select the whole line, copy it (⌘C) and paste it in the Script password box above (⌘V)."
       );
       return;
@@ -356,8 +356,8 @@ export function GoogleScriptConnect({
                   <>
                     Set the script up earlier? In Apps Script, click three times on the line{' '}
                     <code>const CAREHUB_KEY = &apos;…&apos;</code> to select the whole line, copy it (⌘C) and paste it
-                    here (⌘V). Pasting the whole line is fine. New here? Click Copy the script above and this fills in by
-                    itself.
+                    here (⌘V). Pasting the whole line is fine. Made your own password? Type that one, at least 16
+                    characters. New here? Click Copy the script above and this fills in by itself.
                   </>
                 )}
               </div>
@@ -385,11 +385,12 @@ export function GoogleScriptConnect({
               </div>
               {key.trim() &&
                 (cleanScriptKey(key).length >= 16 ? (
-                  <div style={{ color: '#16a34a' }}>✓ Looks right ({cleanScriptKey(key).length} characters)</div>
+                  <div style={{ color: '#16a34a' }}>
+                    ✓ Long enough ({cleanScriptKey(key).length} characters). It must match the script exactly.
+                  </div>
                 ) : (
                   <div style={{ color: '#d97706' }}>
-                    Only {cleanScriptKey(key).length} characters. The password in the script is 32 characters, so copy the
-                    whole line.
+                    Needs at least 16 characters. This has {cleanScriptKey(key).length}.
                   </div>
                 ))}
             </div>
