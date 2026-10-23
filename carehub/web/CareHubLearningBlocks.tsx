@@ -1,9 +1,11 @@
 // CareHub Learning: how course blocks look. Shared by the course player and the Studio preview.
 // Text supports a tiny markdown subset (**bold**, *italic*, [link](https://…), line breaks) — never raw HTML.
-import { createContext, useContext, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 
+import { getAxios } from '@/application/services/js-services/http/core';
+import { getTokenParsed } from '@/application/session/token';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -68,10 +70,14 @@ export const LEARNING_CSS = `
 :root[data-dark-mode='true'] .chl-cover{filter:brightness(.62) saturate(.9)}
 .chl-clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .chl-flash{perspective:900px}
-.chl-flash-inner{transition:transform .35s ease;transform-style:preserve-3d;position:relative;min-height:140px}
+.chl-flash-inner{display:grid;transition:transform .35s ease;transform-style:preserve-3d;position:relative}
 .chl-flash.chl-flipped .chl-flash-inner{transform:rotateY(180deg)}
-.chl-flash-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center;border-radius:12px}
+.chl-flash-face{grid-area:1/1;min-height:140px;min-width:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center;border-radius:12px}
 .chl-flash-back{transform:rotateY(180deg)}
+.chl-drop{background:#2563eb}
+:root[data-dark-mode='true'] .chl-drop{background:#60a5fa}
+.chl-drop-target{outline:2px dashed #2563eb;outline-offset:4px}
+:root[data-dark-mode='true'] .chl-drop-target{outline-color:#60a5fa}
 @media (prefers-reduced-motion: reduce){.chl-flash-inner,.chl-fill{transition:none}}
 `;
 
@@ -112,10 +118,10 @@ export function ProgressBar({ percent, className, label }: { percent: number; cl
 }
 
 export function CourseCover({ cover, preset, seed, className }: { cover: string; preset: Preset; seed: string; className?: string }) {
-  const [broken, setBroken] = useState('');
+  const file = useFileSrc(urlAllowed(cover) ? cover : '');
 
-  if (cover && urlAllowed(cover) && broken !== cover) {
-    return <img src={cover} alt='' loading='lazy' className={cn('h-full w-full object-cover', className)} onError={() => setBroken(cover)} />;
+  if (file.src && file.state === 'ready') {
+    return <img src={file.src} alt='' loading='lazy' className={cn('h-full w-full object-cover', className)} onError={file.fail} />;
   }
 
   return (
@@ -368,7 +374,8 @@ export interface BlockCtx {
   /** Blocks already completed (finished scenarios, clicked Continue buttons). */
   done: Set<string>;
   onKcAnswer: (block: BlockOf<'knowledge_check'>, answer: Answer, correct: boolean) => void;
-  onScenarioDone: (block: BlockOf<'scenario'>) => void;
+  /** A scenario was played to the end, or a process was stepped through to its last step. */
+  onScenarioDone: (block: BlockOf<'scenario'> | BlockOf<'process'>) => void;
   onMedia: (blockId: string, playing: boolean) => void;
 }
 
@@ -413,6 +420,262 @@ function sameOrigin(url: string) {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Files uploaded to Care Hub (pictures, videos, sound clips, documents)
+// ---------------------------------------------------------------------------
+
+const FILE_PATH = '/api/file_storage/';
+
+function apiBase() {
+  return (getAxios()?.defaults.baseURL || '').replace(/\/+$/, '');
+}
+
+/** True for files kept in Care Hub's own file storage (saved in the course as "/api/file_storage/…"). */
+export function isCareHubFile(url: string) {
+  const u = url.trim();
+  const base = apiBase();
+
+  return u.startsWith(FILE_PATH) || (/^https?:\/\//i.test(base) && u.startsWith(base + FILE_PATH));
+}
+
+/** Where to fetch a Care Hub file from (the API can live on another host while developing). */
+export function careHubFileHref(url: string) {
+  const u = url.trim();
+
+  return u.startsWith(FILE_PATH) ? apiBase() + u : u;
+}
+
+/** Downloads a Care Hub file with the sign-in token, the same way pictures in pages are shown. */
+export async function fetchCareHubFile(url: string, signal?: AbortSignal, onProgress?: (loaded: number, total: number) => void) {
+  const token = getTokenParsed()?.access_token;
+  const res = await fetch(careHubFileHref(url), {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'x-platform': 'web-app' },
+    signal,
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.body || !onProgress) return res.blob();
+  const total = Number(res.headers.get('content-length')) || 0;
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let loaded = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+
+    if (done) break;
+    if (value) {
+      parts.push(value);
+      loaded += value.byteLength;
+      onProgress(loaded, total);
+    }
+  }
+
+  return new Blob(parts as BlobPart[], { type: res.headers.get('content-type') || '' });
+}
+
+interface FileEntry {
+  /** An object URL once downloaded, or the plain address if downloading with the token failed. */
+  src: string;
+  blobUrl: string;
+  percent: number;
+  refs: number;
+  timer: number;
+  dead: boolean;
+  abort: AbortController;
+  listeners: Set<() => void>;
+}
+
+/** One download per address, shared by everything showing it; freed a little after the last one stops. */
+const fileCache = new Map<string, FileEntry>();
+
+function freeFile(entry: FileEntry) {
+  entry.dead = true;
+  window.clearTimeout(entry.timer);
+  entry.abort.abort();
+  if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
+  entry.blobUrl = '';
+  entry.listeners.clear();
+}
+
+function holdFile(url: string) {
+  let entry = fileCache.get(url);
+
+  if (!entry) {
+    const e: FileEntry = { src: '', blobUrl: '', percent: 0, refs: 0, timer: 0, dead: false, abort: new AbortController(), listeners: new Set() };
+    const tell = () => e.listeners.forEach((fn) => fn());
+
+    entry = e;
+    fileCache.set(url, e);
+    fetchCareHubFile(url, e.abort.signal, (loaded, total) => {
+      const p = total ? Math.min(99, Math.floor((loaded / total) * 100)) : 0;
+
+      if (p !== e.percent) {
+        e.percent = p;
+        tell();
+      }
+    }).then(
+      (blob) => {
+        if (e.dead) return;
+        e.blobUrl = URL.createObjectURL(blob);
+        e.src = e.blobUrl;
+        tell();
+      },
+      () => {
+        if (e.dead) return;
+        e.src = careHubFileHref(url);
+        tell();
+      }
+    );
+  }
+
+  entry.refs += 1;
+  window.clearTimeout(entry.timer);
+  return entry;
+}
+
+function releaseFile(url: string, entry: FileEntry) {
+  entry.refs -= 1;
+  if (entry.refs > 0) return;
+  if (fileCache.get(url) !== entry) {
+    freeFile(entry);
+    return;
+  }
+
+  // Kept for a few seconds, so going back and forth between lessons doesn't download it again.
+  entry.timer = window.setTimeout(() => {
+    if (entry.refs > 0) return;
+    if (fileCache.get(url) === entry) fileCache.delete(url);
+    freeFile(entry);
+  }, 15000);
+}
+
+function forgetFile(url: string) {
+  const entry = fileCache.get(url);
+
+  if (!entry) return;
+  fileCache.delete(url);
+  if (entry.refs <= 0) freeFile(entry);
+}
+
+export type FileLoad = { src: string; state: 'loading' | 'ready' | 'failed'; percent: number; fail: () => void; retry: () => void };
+
+/**
+ * The address to put in <img>/<video>/<audio> for a link. Care Hub files are downloaded with the sign-in token
+ * and shown from memory; other links are used as they are. Call fail() from onError to show a "try again" state.
+ */
+export function useFileSrc(link: string): FileLoad {
+  const url = link.trim();
+  const managed = isCareHubFile(url);
+  const [round, setRound] = useState(0);
+  const [failedSrc, setFailedSrc] = useState('');
+  const [, setTick] = useState(0);
+  const held = useRef<{ url: string; entry: FileEntry } | null>(null);
+
+  useEffect(() => {
+    if (!managed) return undefined;
+    const entry = holdFile(url);
+    const listener = () => setTick((n) => n + 1);
+
+    held.current = { url, entry };
+    entry.listeners.add(listener);
+    setTick((n) => n + 1);
+    return () => {
+      entry.listeners.delete(listener);
+      if (held.current?.entry === entry) held.current = null;
+      releaseFile(url, entry);
+    };
+  }, [url, managed, round]);
+
+  const mine = held.current;
+  const entry = managed ? (mine && mine.url === url ? mine.entry : fileCache.get(url)) : undefined;
+  const src = managed ? entry?.src || '' : url;
+  const state = managed && !src ? 'loading' : src && failedSrc === src ? 'failed' : 'ready';
+
+  return {
+    src,
+    state,
+    percent: entry?.percent || 0,
+    fail: () => setFailedSrc(src),
+    retry: () => {
+      setFailedSrc('');
+      if (managed) {
+        forgetFile(url);
+        held.current = null;
+        setRound((n) => n + 1);
+      }
+    },
+  };
+}
+
+function MediaLoading({ label, percent, className }: { label: string; percent: number; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'flex w-full flex-col items-center justify-center gap-2 rounded-[10px] bg-fill-content-hover px-4 py-5 text-sm text-text-tertiary',
+        className
+      )}
+    >
+      <span>
+        {label}
+        {percent > 0 ? ` ${percent}%` : ''}
+      </span>
+      {percent > 0 && <ProgressBar percent={percent} className='max-w-[220px]' label={label} />}
+    </div>
+  );
+}
+
+function MediaProblem({ text, onRetry }: { text: string; onRetry: () => void }) {
+  return (
+    <div className='flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-dashed border-border-primary px-4 py-3 text-sm text-text-secondary'>
+      <span>
+        <span aria-hidden='true'>⚠️ </span>
+        {text}
+      </span>
+      <Button type='button' size='sm' variant='outline' onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+const FILE_EXTENSIONS: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'text/plain': 'txt',
+  'text/csv': 'csv',
+  'application/zip': 'zip',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'audio/mpeg': 'mp3',
+  'video/mp4': 'mp4',
+};
+
+function withExtension(name: string, type: string) {
+  if (/\.[a-z0-9]{1,5}$/i.test(name)) return name;
+  const ext = FILE_EXTENSIONS[type.split(';')[0].trim().toLowerCase()];
+
+  return ext ? `${name}.${ext}` : name;
+}
+
+function saveBlob(blob: Blob, name: string) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+
+  a.href = href;
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(href), 60000);
 }
 
 const TONE_EMOJI: Record<string, string> = { info: 'ℹ️', tip: '💡', warning: '⚠️', success: '✅' };
@@ -510,55 +773,13 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
     case 'divider':
       return <hr className='my-1 border-t border-border-primary' />;
     case 'image':
-      if (!urlAllowed(block.url)) return ctx.preview ? <Placeholder>Add an image link to show the picture here.</Placeholder> : null;
-      return (
-        <figure className={cn('mx-auto my-0 w-full', block.width === 'small' ? 'max-w-[320px]' : block.width === 'medium' ? 'max-w-[560px]' : '')}>
-          <img src={block.url} alt={block.alt} loading='lazy' className='w-full rounded-[10px]' />
-          {block.caption.trim() && (
-            <figcaption className='mt-1.5 text-center text-xs text-text-tertiary'>
-              <RichText text={block.caption} />
-            </figcaption>
-          )}
-        </figure>
-      );
+      return <ImageBlock block={block} ctx={ctx} />;
     case 'video':
       return <VideoBlock block={block} ctx={ctx} />;
     case 'audio':
-      if (!urlAllowed(block.url)) return ctx.preview ? <Placeholder>Add an audio link to play it here.</Placeholder> : null;
-      return (
-        <figure className='m-0'>
-          <audio
-            src={block.url}
-            controls
-            preload='metadata'
-            className='w-full'
-            onPlay={() => ctx.onMedia(block.id, true)}
-            onPause={() => ctx.onMedia(block.id, false)}
-            onEnded={() => ctx.onMedia(block.id, false)}
-          />
-          {block.caption.trim() && (
-            <figcaption className='mt-1 text-xs text-text-tertiary'>
-              <RichText text={block.caption} />
-            </figcaption>
-          )}
-        </figure>
-      );
+      return <AudioBlock block={block} ctx={ctx} />;
     case 'file':
-      if (!urlAllowed(block.url)) return ctx.preview ? <Placeholder>Add a file link to show it here.</Placeholder> : null;
-      return (
-        <a
-          href={block.url}
-          target='_blank'
-          rel='noopener noreferrer'
-          className='flex items-center gap-3 rounded-[12px] border border-border-primary px-4 py-3 hover:bg-fill-content-hover'
-        >
-          <span className='text-xl' aria-hidden='true'>
-            📎
-          </span>
-          <span className='min-w-0 flex-1 truncate text-sm font-medium'>{block.name.trim() || fileName(block.url)}</span>
-          <span className='shrink-0 text-xs text-text-tertiary'>Open ↗</span>
-        </a>
-      );
+      return <FileBlock block={block} ctx={ctx} />;
     case 'embed': {
       if (!/^https:\/\/\S+$/i.test(block.url.trim())) {
         return ctx.preview ? <Placeholder>Add an https:// link to embed it here.</Placeholder> : null;
@@ -583,6 +804,8 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
       return <AccordionBlock block={block} />;
     case 'tabs':
       return <TabsBlock block={block} />;
+    case 'process':
+      return <ProcessBlock block={block} ctx={ctx} />;
     case 'flashcards':
       return <FlashcardsBlock block={block} />;
     case 'knowledge_check':
@@ -618,8 +841,129 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
   }
 }
 
+function ImageBlock({ block, ctx }: { block: BlockOf<'image'>; ctx: BlockCtx }) {
+  const ok = urlAllowed(block.url);
+  const file = useFileSrc(ok ? block.url : '');
+
+  if (!ok) return ctx.preview ? <Placeholder>Upload a picture or paste a picture link to show it here.</Placeholder> : null;
+  return (
+    <figure className={cn('mx-auto my-0 w-full', block.width === 'small' ? 'max-w-[320px]' : block.width === 'medium' ? 'max-w-[560px]' : '')}>
+      {file.state === 'loading' ? (
+        <MediaLoading label='Loading the picture…' percent={file.percent} className='min-h-[160px]' />
+      ) : file.state === 'failed' ? (
+        <MediaProblem text='We couldn’t load this picture.' onRetry={file.retry} />
+      ) : (
+        <img src={file.src} alt={block.alt} loading='lazy' className='w-full rounded-[10px]' onError={file.fail} />
+      )}
+      {block.caption.trim() && (
+        <figcaption className='mt-1.5 text-center text-xs text-text-tertiary'>
+          <RichText text={block.caption} />
+        </figcaption>
+      )}
+    </figure>
+  );
+}
+
+function AudioBlock({ block, ctx }: { block: BlockOf<'audio'>; ctx: BlockCtx }) {
+  const ok = urlAllowed(block.url);
+  const file = useFileSrc(ok ? block.url : '');
+
+  if (!ok) return ctx.preview ? <Placeholder>Upload a sound file or paste an audio link to play it here.</Placeholder> : null;
+  return (
+    <figure className='m-0'>
+      {file.state === 'loading' ? (
+        <MediaLoading label='Loading the audio…' percent={file.percent} className='py-3' />
+      ) : file.state === 'failed' ? (
+        <MediaProblem text='We couldn’t play this audio.' onRetry={file.retry} />
+      ) : (
+        <audio
+          src={file.src}
+          controls
+          preload='metadata'
+          className='w-full'
+          onPlay={() => ctx.onMedia(block.id, true)}
+          onPause={() => ctx.onMedia(block.id, false)}
+          onEnded={() => ctx.onMedia(block.id, false)}
+          onError={file.fail}
+        />
+      )}
+      {block.caption.trim() && (
+        <figcaption className='mt-1 text-xs text-text-tertiary'>
+          <RichText text={block.caption} />
+        </figcaption>
+      )}
+    </figure>
+  );
+}
+
+function FileBlock({ block, ctx }: { block: BlockOf<'file'>; ctx: BlockCtx }) {
+  const [percent, setPercent] = useState<number | null>(null);
+  const [problem, setProblem] = useState(false);
+  const abort = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abort.current?.abort(), []);
+  if (!urlAllowed(block.url)) return ctx.preview ? <Placeholder>Upload a file or paste a file link to show it here.</Placeholder> : null;
+  const own = isCareHubFile(block.url);
+  const name = block.name.trim() || (own ? 'File' : fileName(block.url));
+  const href = own ? careHubFileHref(block.url) : block.url.trim();
+
+  const download = async (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!own) return;
+    e.preventDefault();
+    if (percent !== null) return;
+    const ctrl = new AbortController();
+
+    abort.current = ctrl;
+    setProblem(false);
+    setPercent(0);
+    try {
+      const blob = await fetchCareHubFile(block.url, ctrl.signal, (loaded, total) =>
+        setPercent(total ? Math.min(99, Math.floor((loaded / total) * 100)) : 0)
+      );
+
+      saveBlob(blob, withExtension(name, blob.type));
+    } catch {
+      if (!ctrl.signal.aborted) setProblem(true);
+    }
+
+    if (!ctrl.signal.aborted) setPercent(null);
+  };
+
+  return (
+    <div>
+      <a
+        href={href}
+        target={own ? undefined : '_blank'}
+        rel='noopener noreferrer'
+        download={own ? name : undefined}
+        aria-busy={percent !== null}
+        onClick={download}
+        className='flex items-center gap-3 rounded-[12px] border border-border-primary px-4 py-3 hover:bg-fill-content-hover'
+      >
+        <span className='text-xl' aria-hidden='true'>
+          📎
+        </span>
+        <span className='min-w-0 flex-1 truncate text-sm font-medium'>{name}</span>
+        <span className='shrink-0 text-xs text-text-tertiary'>
+          {!own ? 'Open ↗' : percent === null ? 'Download ↓' : `Downloading…${percent ? ` ${percent}%` : ''}`}
+        </span>
+      </a>
+      {problem && (
+        <div role='alert' className='mt-1.5 text-xs text-text-secondary'>
+          We couldn’t download it just now.{' '}
+          <a href={href} target='_blank' rel='noopener noreferrer' className='text-text-action underline underline-offset-2'>
+            Open the file in a new tab
+          </a>{' '}
+          or try again.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) {
   const embed = videoEmbedUrl(block.url);
+  const file = useFileSrc(!embed && urlAllowed(block.url) ? block.url : '');
   const caption = block.caption.trim() ? (
     <figcaption className='mt-1.5 text-xs text-text-tertiary'>
       <RichText text={block.caption} />
@@ -643,19 +987,29 @@ function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) 
     );
   }
 
-  if (!urlAllowed(block.url)) return ctx.preview ? <Placeholder>Add a video link (YouTube, Vimeo, Loom or a video file).</Placeholder> : null;
+  if (!urlAllowed(block.url)) {
+    return ctx.preview ? <Placeholder>Upload a video or paste a link (YouTube, Vimeo, Loom or a video file).</Placeholder> : null;
+  }
+
   return (
     <figure className='m-0'>
-      <video
-        src={block.url}
-        controls
-        preload='metadata'
-        playsInline
-        className='w-full rounded-[10px] bg-black'
-        onPlay={() => ctx.onMedia(block.id, true)}
-        onPause={() => ctx.onMedia(block.id, false)}
-        onEnded={() => ctx.onMedia(block.id, false)}
-      />
+      {file.state === 'loading' ? (
+        <MediaLoading label='Loading the video…' percent={file.percent} className='aspect-video' />
+      ) : file.state === 'failed' ? (
+        <MediaProblem text='We couldn’t play this video.' onRetry={file.retry} />
+      ) : (
+        <video
+          src={file.src}
+          controls
+          preload='metadata'
+          playsInline
+          className='w-full rounded-[10px] bg-black'
+          onPlay={() => ctx.onMedia(block.id, true)}
+          onPause={() => ctx.onMedia(block.id, false)}
+          onEnded={() => ctx.onMedia(block.id, false)}
+          onError={file.fail}
+        />
+      )}
       {caption}
     </figure>
   );
@@ -728,6 +1082,72 @@ function TabsBlock({ block }: { block: BlockOf<'tabs'> }) {
   );
 }
 
+function ProcessBlock({ block, ctx }: { block: BlockOf<'process'>; ctx: BlockCtx }) {
+  const steps = block.items.filter((it) => it.title.trim() || it.text.trim());
+  const [index, setIndex] = useState(0);
+  const reported = useRef(ctx.done.has(block.id));
+
+  if (!steps.length) return ctx.preview ? <Placeholder>Add steps to this process.</Placeholder> : null;
+  const at = Math.min(index, steps.length - 1);
+  const step = steps[at];
+  const last = at === steps.length - 1;
+  const go = (n: number) => {
+    setIndex(n);
+    if (n === steps.length - 1 && n > 0 && !reported.current) {
+      reported.current = true;
+      ctx.onScenarioDone(block);
+    }
+  };
+
+  return (
+    <div className='rounded-[12px] border border-border-primary p-4'>
+      <div aria-live='polite'>
+        <div className='flex items-center justify-between gap-3'>
+          <div className='text-[11px] font-semibold uppercase tracking-wide text-text-tertiary'>
+            Step {at + 1} of {steps.length}
+          </div>
+          <div className='flex flex-wrap justify-end gap-1.5' aria-hidden='true'>
+            {steps.map((s, i) => (
+              <span key={s.id} className={cn('h-2 w-2 rounded-full', i <= at ? 'chl-fill' : 'chl-track', i < at && 'opacity-50')} />
+            ))}
+          </div>
+        </div>
+        <div className='mt-2 text-lg font-semibold leading-snug'>{step.title.trim() || `Step ${at + 1}`}</div>
+        {step.text.trim() && (
+          <div className='mt-1 text-[15px] leading-relaxed'>
+            <RichText text={step.text} />
+          </div>
+        )}
+      </div>
+      <div className='mt-4 flex items-center justify-between gap-2'>
+        <Button
+          type='button'
+          size='sm'
+          variant='outline'
+          aria-disabled={at === 0}
+          className={cn(at === 0 && 'opacity-50')}
+          onClick={() => at > 0 && go(at - 1)}
+        >
+          ← Back
+        </Button>
+        <Button type='button' size='sm' onClick={() => go(last ? 0 : at + 1)}>
+          {last ? 'Start again' : 'Next →'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Text without the little markdown marks, for screen-reader labels. */
+function plainText(text: string) {
+  return text
+    .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, '$1')
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+    .replace(/\*([^*\n]+?)\*/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function FlashcardsBlock({ block }: { block: BlockOf<'flashcards'> }) {
   const narrow = useNarrowLayout();
   const [flipped, setFlipped] = useState<string[]>([]);
@@ -736,7 +1156,7 @@ function FlashcardsBlock({ block }: { block: BlockOf<'flashcards'> }) {
   if (!cards.length) return null;
   return (
     <div>
-      <div className='mb-2 text-xs text-text-tertiary'>Tap a card to flip it.</div>
+      <div className='mb-2 text-xs text-text-tertiary'>Tap or click a card to flip it.</div>
       <div className={cn('grid gap-3', narrow ? 'grid-cols-1' : cards.length === 1 ? 'grid-cols-1' : cards.length === 2 || cards.length === 4 ? 'grid-cols-2' : 'grid-cols-3')}>
         {cards.map((c) => {
           const isFlipped = flipped.includes(c.id);
@@ -746,23 +1166,23 @@ function FlashcardsBlock({ block }: { block: BlockOf<'flashcards'> }) {
               key={c.id}
               type='button'
               aria-pressed={isFlipped}
-              aria-label={isFlipped ? `Back: ${c.back}` : `Front: ${c.front}. Tap to flip.`}
-              className={cn('chl-flash w-full text-left', isFlipped && 'chl-flipped')}
+              aria-label={isFlipped ? `Back: ${plainText(c.back) || 'empty'}` : `Front: ${plainText(c.front) || 'empty'}. Flip to see the back.`}
+              className={cn('chl-flash block w-full rounded-[12px] text-left', isFlipped && 'chl-flipped')}
               onClick={() => setFlipped((list) => (list.includes(c.id) ? list.filter((x) => x !== c.id) : [...list, c.id]))}
             >
-              <div className='chl-flash-inner'>
-                <div className='chl-flash-face border border-border-primary bg-background-primary'>
-                  <div className='text-[15px] font-semibold'>
+              <span className='chl-flash-inner'>
+                <span className='chl-flash-face border border-border-primary bg-background-primary' aria-hidden={isFlipped}>
+                  <span className='block text-[15px] font-semibold'>
                     <RichText text={c.front || '…'} />
-                  </div>
-                  <div className='mt-2 text-[11px] text-text-tertiary'>Tap to flip</div>
-                </div>
-                <div className='chl-flash-face chl-flash-back border border-border-primary bg-fill-content-hover'>
-                  <div className='text-sm leading-relaxed'>
+                  </span>
+                  <span className='mt-2 block text-[11px] text-text-tertiary'>Tap to flip</span>
+                </span>
+                <span className='chl-flash-face chl-flash-back border border-border-primary bg-fill-content-hover' aria-hidden={!isFlipped}>
+                  <span className='block text-sm leading-relaxed'>
                     <RichText text={c.back || '…'} />
-                  </div>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </span>
             </button>
           );
         })}

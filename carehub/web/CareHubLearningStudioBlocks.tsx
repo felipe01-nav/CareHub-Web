@@ -1,12 +1,15 @@
-// CareHub Learning Studio: the block library, form fields, and the editor for each kind of block and question.
-import { useMemo, useState } from 'react';
+// CareHub Learning Studio: the block library, form fields, uploads, drag to reorder, and the editor for each
+// kind of block and question.
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import type { ReactNode } from 'react';
+import type { DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 
+import { executeAPIRequest, getAxios } from '@/application/services/js-services/http/core';
 import { cn } from '@/lib/utils';
 
+import { chErrorText } from './CareHubCore';
 import { clampInt, newId, setQuestionKind, urlAllowed } from './CareHubLearningApi';
-import { videoEmbedUrl } from './CareHubLearningBlocks';
+import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
 
@@ -39,13 +42,14 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
   callout: { emoji: '💡', label: 'Callout', hint: 'A tip, note or warning in a colored box' },
   list: { emoji: '📋', label: 'List', hint: 'Bullets, numbers or a checklist' },
   divider: { emoji: '➖', label: 'Divider', hint: 'A line between sections' },
-  image: { emoji: '🖼️', label: 'Image', hint: 'A picture from a link' },
-  video: { emoji: '🎬', label: 'Video', hint: 'YouTube, Vimeo, Loom or a video file link' },
-  audio: { emoji: '🎧', label: 'Audio', hint: 'A sound clip from a link' },
-  file: { emoji: '📎', label: 'File', hint: 'A download link' },
+  image: { emoji: '🖼️', label: 'Image', hint: 'A picture you upload or link to' },
+  video: { emoji: '🎬', label: 'Video', hint: 'Upload a video, or a YouTube, Vimeo or Loom link' },
+  audio: { emoji: '🎧', label: 'Audio', hint: 'A sound clip you upload or link to' },
+  file: { emoji: '📎', label: 'File', hint: 'A file people can download' },
   embed: { emoji: '🧩', label: 'Embed', hint: 'Show another website inside the lesson' },
   accordion: { emoji: '🔽', label: 'Accordion', hint: 'Sections people open one at a time' },
   tabs: { emoji: '🗂️', label: 'Tabs', hint: 'Sections side by side' },
+  process: { emoji: '👣', label: 'Process', hint: 'Steps people go through one at a time' },
   flashcards: { emoji: '🃏', label: 'Flashcards', hint: 'Cards people flip to test themselves' },
   continue: { emoji: '⏬', label: 'Continue button', hint: 'Shows the rest of the lesson one step at a time' },
   knowledge_check: { emoji: '✅', label: 'Knowledge check', hint: 'A practice question with instant feedback' },
@@ -56,7 +60,7 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
 export const BLOCK_GROUPS: { title: string; types: BlockType[] }[] = [
   { title: 'Text', types: ['heading', 'paragraph', 'statement', 'quote', 'callout', 'list', 'divider'] },
   { title: 'Media', types: ['image', 'video', 'audio', 'file', 'embed'] },
-  { title: 'Interactive', types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'continue'] },
+  { title: 'Interactive', types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'continue'] },
   { title: 'Links', types: ['page_link'] },
 ];
 
@@ -98,8 +102,6 @@ export function BlockLibrary({ onPick, onClose }: { onPick: (type: BlockType) =>
 // ---------------------------------------------------------------------------
 
 export const FORMAT_HINT = 'Tip: **bold**, *italic*, [link text](https://…)';
-export const MEDIA_NOTE =
-  'Paste a link (https://…). Uploading files here isn’t available yet — upload to a Care Hub page or a video site and paste the link.';
 export const SAMPLE_PICTURES = [1, 2, 3, 4, 5, 6].map((n) => `/covers/m_cover_image_${n}.png`);
 
 export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
@@ -121,6 +123,7 @@ export function TextLine({
   className,
   type = 'text',
   autoFocus,
+  id,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -130,9 +133,11 @@ export function TextLine({
   className?: string;
   type?: 'text' | 'url' | 'search';
   autoFocus?: boolean;
+  id?: string;
 }) {
   return (
     <input
+      id={id}
       type={type}
       autoFocus={autoFocus}
       value={value}
@@ -344,6 +349,505 @@ export function PicturePicker({ value, onPick, label = 'Or pick a sample picture
   );
 }
 
+// ---------------------------------------------------------------------------
+// Uploads (Care Hub's file storage — the same place pictures in pages go, so they're in the nightly backups)
+// ---------------------------------------------------------------------------
+
+export type UploadKind = 'image' | 'video' | 'audio' | 'file';
+
+/** Where uploads go: this workspace's file storage, in a folder named after the course. */
+export const UploadContext = createContext<{ workspaceId: string; courseId: string } | null>(null);
+
+const MB = 1024 * 1024;
+
+const UPLOAD_RULES: Record<UploadKind, { max: number; accept: string; noun: string; tip: string; wrong: string }> = {
+  image: {
+    max: 10 * MB,
+    accept: 'image/png,image/jpeg,image/gif,image/webp,image/avif',
+    noun: 'picture',
+    tip: 'try a smaller picture, or save it as a JPG',
+    wrong: 'isn’t a picture we can show. Pick a PNG, JPG, GIF or WebP file.',
+  },
+  video: {
+    max: 50 * MB,
+    accept: 'video/*',
+    noun: 'video',
+    tip: 'for longer videos paste a Loom, YouTube or Vimeo link',
+    wrong: 'isn’t a video file. Pick an MP4, MOV or WebM video — or paste a YouTube, Vimeo or Loom link.',
+  },
+  audio: {
+    max: 25 * MB,
+    accept: 'audio/*',
+    noun: 'audio file',
+    tip: 'try a shorter clip, or save it as an MP3',
+    wrong: 'isn’t an audio file. Pick an MP3, M4A or WAV file.',
+  },
+  file: { max: 25 * MB, accept: '', noun: 'file', tip: 'try a smaller file, or paste a link to it instead', wrong: '' },
+};
+
+function sizeText(bytes: number) {
+  const mb = bytes / MB;
+
+  return mb >= 10 ? `${Math.round(mb)} MB` : mb >= 0.1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function tooBigText(kind: UploadKind, bytes: number) {
+  const rule = UPLOAD_RULES[kind];
+
+  return `This ${rule.noun} is ${sizeText(bytes)}. The limit is ${sizeText(rule.max)} — ${rule.tip}.`;
+}
+
+function typeOk(kind: UploadKind, file: File) {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+
+  if (kind === 'image') return /^image\/(png|jpeg|gif|webp|avif)$/.test(type) || (!type && /\.(png|jpe?g|gif|webp|avif)$/.test(name));
+  if (kind === 'video') return type.startsWith('video/') || (!type && /\.(mp4|m4v|mov|webm|ogv)$/.test(name));
+  if (kind === 'audio') return type.startsWith('audio/') || (!type && /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac)$/.test(name));
+  return true;
+}
+
+/** Problems we can spot before sending anything. */
+export function uploadProblem(kind: UploadKind, file: File) {
+  if (!typeOk(kind, file)) return `“${file.name}” ${UPLOAD_RULES[kind].wrong}`;
+  if (file.size > UPLOAD_RULES[kind].max) return tooBigText(kind, file.size);
+  if (!file.size) return `“${file.name}” is empty.`;
+  return '';
+}
+
+/** Files a browser could run as a page are stored as plain downloads. */
+function uploadType(kind: UploadKind, file: File) {
+  const type = file.type.toLowerCase();
+
+  if (!type || (kind === 'file' && /html|svg|xml|javascript|ecmascript/.test(type))) return 'application/octet-stream';
+  return file.type;
+}
+
+/** Sends a file to Care Hub's file storage and returns its Care Hub address ("/api/file_storage/…"). */
+export async function uploadToCareHub(
+  file: File,
+  where: { workspaceId: string; courseId: string },
+  kind: UploadKind,
+  signal: AbortSignal,
+  onProgress: (percent: number) => void
+) {
+  const folder = `/api/file_storage/${where.workspaceId}/v1/blob/${encodeURIComponent(where.courseId)}`;
+  const data = await executeAPIRequest<{ file_id: string }>(() =>
+    getAxios()?.put(folder, file, {
+      headers: { 'Content-Type': uploadType(kind, file) },
+      signal,
+      onUploadProgress: (e) => {
+        const total = e.total || file.size;
+
+        if (total) onProgress(Math.min(99, Math.floor((e.loaded / total) * 100)));
+      },
+    })
+  );
+
+  if (!data || typeof data.file_id !== 'string' || !data.file_id) throw new Error('The upload didn’t finish. Please try again.');
+  return `${folder}/${data.file_id}`;
+}
+
+function uploadErrorText(err: unknown, kind: UploadKind, file: File) {
+  const e = (err || {}) as { httpStatus?: number; status?: number; message?: string; response?: { status?: number } };
+  const status = e.httpStatus || e.status || e.response?.status || 0;
+
+  if (status === 413 || /\b413\b|too large/i.test(e.message || '')) return tooBigText(kind, Math.max(file.size, UPLOAD_RULES[kind].max + 1));
+  return `Couldn’t upload “${file.name}”. ${chErrorText(err)}`;
+}
+
+function SmallButton({ onClick, children, ariaLabel }: { onClick: () => void; children: ReactNode; ariaLabel?: string }) {
+  return (
+    <button
+      type='button'
+      aria-label={ariaLabel}
+      onClick={onClick}
+      className='shrink-0 rounded-[8px] border border-border-primary px-2.5 py-1.5 text-sm font-medium hover:bg-fill-content-hover'
+    >
+      {children}
+    </button>
+  );
+}
+
+function UploadedThumb({ url }: { url: string }) {
+  const file = useFileSrc(url);
+
+  return (
+    <span className='flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-fill-content-hover text-xs text-text-tertiary'>
+      {file.state === 'ready' ? <img src={file.src} alt='' className='h-full w-full object-cover' onError={file.fail} /> : file.state === 'loading' ? '…' : '⚠️'}
+    </span>
+  );
+}
+
+const UPLOADED_NAME: Record<UploadKind, string> = { image: 'picture', video: 'video', audio: 'audio', file: 'file' };
+
+/**
+ * A link field with an Upload button (and drop-a-file). Pasting a link keeps working. After an upload the field
+ * shows "Uploaded" with Replace / Remove instead of the long Care Hub address.
+ */
+export function MediaField({
+  kind,
+  label,
+  value,
+  onChange,
+  onUpload,
+  hint,
+  placeholder,
+  uploadedName,
+}: {
+  kind: UploadKind;
+  label: string;
+  value: string;
+  onChange: (url: string) => void;
+  /** Called instead of onChange when an upload finishes, with the file that was sent. */
+  onUpload?: (url: string, file: File) => void;
+  hint?: ReactNode;
+  placeholder?: string;
+  uploadedName?: string;
+}) {
+  const where = useContext(UploadContext);
+  const id = useId();
+  const picker = useRef<HTMLInputElement | null>(null);
+  const abort = useRef<AbortController | null>(null);
+  const latest = useRef({ onChange, onUpload });
+  const [busy, setBusy] = useState<{ name: string; percent: number } | null>(null);
+  const [error, setError] = useState('');
+  const [over, setOver] = useState(false);
+  const rule = UPLOAD_RULES[kind];
+  const own = isCareHubFile(value);
+  const problem = own ? '' : linkProblem(value);
+
+  latest.current = { onChange, onUpload };
+  useEffect(() => () => abort.current?.abort(), []);
+
+  const send = async (file: File) => {
+    if (!where || abort.current) return;
+    const bad = uploadProblem(kind, file);
+
+    if (bad) {
+      setError(bad);
+      return;
+    }
+
+    const ctrl = new AbortController();
+
+    abort.current = ctrl;
+    setError('');
+    setBusy({ name: file.name, percent: 0 });
+    try {
+      const url = await uploadToCareHub(file, where, kind, ctrl.signal, (percent) =>
+        setBusy((b) => (b && b.percent === percent ? b : { name: file.name, percent }))
+      );
+
+      if (ctrl.signal.aborted) return;
+      const { onChange: change, onUpload: uploaded } = latest.current;
+
+      if (uploaded) uploaded(url, file);
+      else change(url);
+    } catch (e) {
+      if (!ctrl.signal.aborted) setError(uploadErrorText(e, kind, file));
+    } finally {
+      if (abort.current === ctrl) {
+        abort.current = null;
+        setBusy(null);
+      }
+    }
+  };
+
+  const cancel = () => {
+    abort.current?.abort();
+    abort.current = null;
+    setBusy(null);
+  };
+
+  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files');
+  const status = error ? (
+    <span role='alert' className='text-xs text-text-error'>
+      {error}
+    </span>
+  ) : problem ? (
+    <span className='text-xs text-text-error'>{problem}</span>
+  ) : hint ? (
+    <span className='text-xs text-text-tertiary'>{hint}</span>
+  ) : null;
+
+  return (
+    <div
+      role='group'
+      aria-labelledby={`${id}-label`}
+      className={cn('flex min-w-0 flex-col gap-1 rounded-[10px]', over && 'chl-drop-target')}
+      onDragOver={(e) => {
+        if (!where || busy || !hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        if (!over) setOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
+      }}
+      onDrop={(e) => {
+        if (!where || busy || !hasFiles(e)) return;
+        e.preventDefault();
+        setOver(false);
+        const file = e.dataTransfer.files?.[0];
+
+        if (file) void send(file);
+      }}
+    >
+      {busy || own ? (
+        <span id={`${id}-label`} className='text-xs font-medium text-text-secondary'>
+          {label}
+        </span>
+      ) : (
+        <label id={`${id}-label`} htmlFor={`${id}-url`} className='text-xs font-medium text-text-secondary'>
+          {label}
+        </label>
+      )}
+      {busy ? (
+        <div className='flex items-center gap-2 rounded-[8px] border border-border-primary px-3 py-2'>
+          <div className='min-w-0 flex-1' role='status'>
+            <div className='truncate text-sm'>
+              Uploading “{busy.name}”… {busy.percent}%
+            </div>
+            <ProgressBar percent={busy.percent} className='mt-1.5' label='Upload progress' />
+          </div>
+          <SmallButton onClick={cancel}>Cancel</SmallButton>
+        </div>
+      ) : own ? (
+        <div className='flex flex-wrap items-center gap-2 rounded-[8px] border border-border-primary px-3 py-2'>
+          {kind === 'image' && <UploadedThumb url={value} />}
+          <span className='min-w-0 flex-1 truncate text-sm'>
+            <span className='chl-mark-right' aria-hidden='true'>
+              ✓{' '}
+            </span>
+            {uploadedName?.trim() ? `Uploaded “${uploadedName.trim()}”` : `Uploaded ${UPLOADED_NAME[kind]}`}
+          </span>
+          {where && (
+            <SmallButton onClick={() => picker.current?.click()} ariaLabel={`Replace the ${UPLOADED_NAME[kind]}`}>
+              Replace
+            </SmallButton>
+          )}
+          <SmallButton onClick={() => latest.current.onChange('')} ariaLabel={`Remove the ${UPLOADED_NAME[kind]}`}>
+            Remove
+          </SmallButton>
+        </div>
+      ) : (
+        <div className='flex min-w-0 items-center gap-2'>
+          <TextLine id={`${id}-url`} type='url' value={value} onChange={onChange} placeholder={placeholder || 'https://…'} maxLength={2000} />
+          {where && <SmallButton onClick={() => picker.current?.click()}>Upload</SmallButton>}
+        </div>
+      )}
+      <input
+        ref={picker}
+        type='file'
+        accept={rule.accept || undefined}
+        className='hidden'
+        tabIndex={-1}
+        aria-hidden='true'
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+
+          e.target.value = '';
+          if (file) void send(file);
+        }}
+      />
+      {status}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Drag to reorder (mouse, pen or finger on the grip; the ↑ ↓ buttons stay for keyboards and phones)
+// ---------------------------------------------------------------------------
+
+export type DropEdge = 'before' | 'after' | null;
+
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let p = el; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const oy = window.getComputedStyle(p).overflowY;
+
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+
+  return null;
+}
+
+/**
+ * Reorders the children of a list marked with data-drag-item. Put `ref={setList}` on the list and
+ * `onPointerDown={grab(i)}` on each item's grip; onMove(from, to) runs once, when the item is dropped.
+ */
+export function useDragSort(onMove: (from: number, to: number) => void) {
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const list = useRef<HTMLElement | null>(null);
+  const moveRef = useRef(onMove);
+  const stop = useRef<(() => void) | null>(null);
+
+  moveRef.current = onMove;
+  useEffect(() => () => stop.current?.(), []);
+
+  const setList = useRef((el: HTMLElement | null) => {
+    list.current = el;
+  }).current;
+
+  const grab = (from: number) => (e: ReactPointerEvent<HTMLElement>) => {
+    if (e.button !== 0 || !list.current || stop.current) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    const pointer = e.pointerId;
+    const startY = e.clientY;
+    const scroller = scrollParent(list.current);
+    let y = e.clientY;
+    let to = from;
+    let started = false;
+    let frame = 0;
+
+    try {
+      handle.setPointerCapture(pointer);
+    } catch {
+      // Not every browser lets us capture; the window listeners below still work.
+    }
+
+    const place = () => {
+      const items = Array.from(list.current?.children || []).filter((el): el is HTMLElement => el instanceof HTMLElement && el.hasAttribute('data-drag-item'));
+      let n = 0;
+
+      items.forEach((el, i) => {
+        if (i === from) return;
+        const r = el.getBoundingClientRect();
+
+        if (r.top + r.height / 2 < y) n += 1;
+      });
+      to = Math.min(n, Math.max(0, items.length - 1));
+      setDrag((d) => (d && d.from === from && d.to === to ? d : { from, to }));
+    };
+
+    const tick = () => {
+      frame = 0;
+      if (!started) return;
+      const box = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const top = Math.max(box.top, 0) + 48;
+      const bottom = Math.min(box.bottom, window.innerHeight) - 48;
+      const speed = y < top ? -Math.min(18, Math.ceil((top - y) / 3)) : y > bottom ? Math.min(18, Math.ceil((y - bottom) / 3)) : 0;
+      let scrolled = false;
+
+      if (speed) {
+        const before = scroller ? scroller.scrollTop : window.scrollY;
+
+        if (scroller) scroller.scrollTop += speed;
+        else window.scrollBy(0, speed);
+        scrolled = (scroller ? scroller.scrollTop : window.scrollY) !== before;
+      }
+
+      place();
+      if (scrolled) frame = window.requestAnimationFrame(tick);
+    };
+
+    const onPointerMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointer) return;
+      y = ev.clientY;
+      if (!started) {
+        if (Math.abs(y - startY) < 4) return;
+        started = true;
+        document.body.style.cursor = 'grabbing';
+      }
+
+      ev.preventDefault();
+      if (!frame) frame = window.requestAnimationFrame(tick);
+    };
+
+    const finish = (keep: boolean) => {
+      const wasStarted = started;
+
+      stop.current?.();
+      setDrag(null);
+      if (keep && wasStarted && to !== from) moveRef.current(from, to);
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId === pointer) finish(true);
+    };
+
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId === pointer) finish(false);
+    };
+
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish(false);
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey, true);
+    stop.current = () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = 0;
+      started = false;
+      document.body.style.cursor = '';
+      try {
+        handle.releasePointerCapture(pointer);
+      } catch {
+        // Already released.
+      }
+
+      stop.current = null;
+    };
+  };
+
+  /** Where to draw the drop line for item i while dragging. */
+  const edgeOf = (i: number): DropEdge => {
+    if (!drag || drag.to === drag.from || i !== drag.to) return null;
+    return drag.to > drag.from ? 'after' : 'before';
+  };
+
+  return { drag, setList, grab, edgeOf };
+}
+
+/** The six-dot grip people drag. Hidden from screen readers — they use the move buttons instead. */
+export function DragGrip({ onPointerDown, className }: { onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void; className?: string }) {
+  return (
+    <span
+      aria-hidden='true'
+      title='Drag to move'
+      onPointerDown={onPointerDown}
+      className={cn(
+        'flex h-7 w-5 shrink-0 cursor-grab touch-none select-none items-center justify-center rounded-[6px] text-text-tertiary hover:bg-fill-content-hover',
+        className
+      )}
+    >
+      <svg width='10' height='16' viewBox='0 0 10 16' fill='currentColor' aria-hidden='true' focusable='false'>
+        <circle cx='2.5' cy='3' r='1.4' />
+        <circle cx='7.5' cy='3' r='1.4' />
+        <circle cx='2.5' cy='8' r='1.4' />
+        <circle cx='7.5' cy='8' r='1.4' />
+        <circle cx='2.5' cy='13' r='1.4' />
+        <circle cx='7.5' cy='13' r='1.4' />
+      </svg>
+    </span>
+  );
+}
+
+/** The line that shows where a dragged item will land. `gap` is the list's gap in pixels. */
+export function DropLine({ edge, gap }: { edge: DropEdge; gap: number }) {
+  if (!edge) return null;
+  const offset = -(gap / 2) - 1.5;
+
+  return (
+    <span
+      aria-hidden='true'
+      className='chl-drop pointer-events-none absolute inset-x-0 z-10 h-[3px] rounded-full'
+      style={edge === 'before' ? { top: offset } : { bottom: offset }}
+    />
+  );
+}
+
 function move<T>(list: T[], from: number, to: number): T[] {
   if (to < 0 || to >= list.length || from === to) return list;
   const next = list.slice();
@@ -472,10 +976,24 @@ export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange:
 }
 
 // ---------------------------------------------------------------------------
-// Lists of items (lists, accordions, tabs, flashcards)
+// Lists of items (lists, accordions, tabs, processes, flashcards)
 // ---------------------------------------------------------------------------
 
-function ItemsEditor({ items, onChange, noun }: { items: TextItem[]; onChange: (items: TextItem[]) => void; noun: string }) {
+function ItemsEditor({
+  items,
+  onChange,
+  noun,
+  min = 1,
+  max = 20,
+  textPlaceholder = 'What people see when they open it',
+}: {
+  items: TextItem[];
+  onChange: (items: TextItem[]) => void;
+  noun: string;
+  min?: number;
+  max?: number;
+  textPlaceholder?: string;
+}) {
   const set = (i: number, patch: Partial<TextItem>) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
 
   return (
@@ -490,14 +1008,14 @@ function ItemsEditor({ items, onChange, noun }: { items: TextItem[]; onChange: (
             <IconButton label='Move down' disabled={i === items.length - 1} onClick={() => onChange(move(items, i, i + 1))}>
               ↓
             </IconButton>
-            <IconButton label={`Remove ${noun.toLowerCase()}`} danger disabled={items.length <= 1} onClick={() => onChange(items.filter((_, j) => j !== i))}>
+            <IconButton label={`Remove ${noun.toLowerCase()}`} danger disabled={items.length <= min} onClick={() => onChange(items.filter((_, j) => j !== i))}>
               ×
             </IconButton>
           </div>
-          <TextBox value={it.text} rows={3} onChange={(v) => set(i, { text: v })} placeholder='What people see when they open it' ariaLabel={`${noun} ${i + 1} text`} />
+          <TextBox value={it.text} rows={3} onChange={(v) => set(i, { text: v })} placeholder={textPlaceholder} ariaLabel={`${noun} ${i + 1} text`} />
         </div>
       ))}
-      <AddButton disabled={items.length >= 20} onClick={() => onChange([...items, { id: newId('i'), title: '', text: '' }])}>
+      <AddButton disabled={items.length >= max} onClick={() => onChange([...items, { id: newId('i'), title: '', text: '' }])}>
         Add a {noun.toLowerCase()}
       </AddButton>
     </div>
@@ -752,6 +1270,49 @@ const LEVELS: { value: string; label: string }[] = [
   { value: '3', label: 'Small' },
 ];
 
+function ImageEditor({ block, onChange }: { block: BlockOf<'image'>; onChange: (b: Block) => void }) {
+  const altId = useId();
+  const needsAlt = Boolean(block.url.trim()) && !block.alt.trim();
+
+  return (
+    <div className='flex flex-col gap-3'>
+      <MediaField
+        kind='image'
+        label='Picture'
+        value={block.url}
+        onChange={(url) => onChange({ ...block, url })}
+        onUpload={(url) => {
+          onChange({ ...block, url });
+          // Ask for a description straight away — it's read aloud for people who can't see the picture.
+          if (!block.alt.trim()) window.setTimeout(() => document.getElementById(altId)?.focus(), 0);
+        }}
+        hint='Upload a picture (up to 10 MB) or paste a link.'
+      />
+      <PicturePicker value={block.url} onPick={(url) => onChange({ ...block, url })} />
+      <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+        <Field
+          label='Describe the picture'
+          hint={
+            needsAlt ? (
+              <span className='chl-mark-wrong'>Please describe it — it’s read aloud for people who can’t see it.</span>
+            ) : (
+              'Read aloud for people who can’t see it.'
+            )
+          }
+        >
+          <TextLine id={altId} value={block.alt} onChange={(v) => onChange({ ...block, alt: v })} placeholder='e.g. A baker boxing an order' />
+        </Field>
+        <Field label='Caption (optional)'>
+          <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
+        </Field>
+      </div>
+      <Field label='Size' className='self-start'>
+        <ChSelect value={block.width} options={WIDTHS} onChange={(v) => onChange({ ...block, width: v })} ariaLabel='Picture size' />
+      </Field>
+    </div>
+  );
+}
+
 export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
   switch (block.type) {
     case 'heading':
@@ -821,34 +1382,24 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
     case 'divider':
       return <div className='text-sm text-text-tertiary'>A line between sections. Nothing to fill in.</div>;
     case 'image':
-      return (
-        <div className='flex flex-col gap-3'>
-          <UrlField label='Picture link' value={block.url} onChange={(v) => onChange({ ...block, url: v })} hint={MEDIA_NOTE} />
-          <PicturePicker value={block.url} onPick={(url) => onChange({ ...block, url })} />
-          <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
-            <Field label='Describe the picture' hint='Read aloud for people who can’t see it.'>
-              <TextLine value={block.alt} onChange={(v) => onChange({ ...block, alt: v })} placeholder='e.g. A baker boxing an order' />
-            </Field>
-            <Field label='Caption (optional)'>
-              <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
-            </Field>
-          </div>
-          <Field label='Size' className='self-start'>
-            <ChSelect value={block.width} options={WIDTHS} onChange={(v) => onChange({ ...block, width: v })} ariaLabel='Picture size' />
-          </Field>
-        </div>
-      );
+      return <ImageEditor block={block} onChange={onChange} />;
     case 'video': {
       const u = block.url.trim();
-      const known = !u || Boolean(videoEmbedUrl(u)) || /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(u);
+      const known = !u || Boolean(videoEmbedUrl(u)) || isCareHubFile(u) || /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(u);
 
       return (
         <div className='flex flex-col gap-3'>
-          <UrlField
-            label='Video link'
+          <MediaField
+            kind='video'
+            label='Video'
             value={block.url}
             onChange={(v) => onChange({ ...block, url: v })}
-            hint={known ? `YouTube, Vimeo and Loom links play right in the lesson. ${MEDIA_NOTE}` : 'We’ll show this as a link to open the video.'}
+            placeholder='https://… (YouTube, Vimeo, Loom or a video file)'
+            hint={
+              known
+                ? 'Upload a video (up to 50 MB), or paste a YouTube, Vimeo or Loom link — they play right in the lesson.'
+                : 'We’ll show this as a link to open the video.'
+            }
           />
           <Field label='Caption (optional)'>
             <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
@@ -860,7 +1411,13 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
     case 'audio':
       return (
         <div className='flex flex-col gap-3'>
-          <UrlField label='Audio link' value={block.url} onChange={(v) => onChange({ ...block, url: v })} hint={MEDIA_NOTE} />
+          <MediaField
+            kind='audio'
+            label='Audio'
+            value={block.url}
+            onChange={(v) => onChange({ ...block, url: v })}
+            hint='Upload a sound file (up to 25 MB) or paste a link.'
+          />
           <Field label='Caption (optional)'>
             <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
           </Field>
@@ -869,7 +1426,15 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
     case 'file':
       return (
         <div className='flex flex-col gap-3'>
-          <UrlField label='File link' value={block.url} onChange={(v) => onChange({ ...block, url: v })} hint={MEDIA_NOTE} />
+          <MediaField
+            kind='file'
+            label='File'
+            value={block.url}
+            uploadedName={block.name}
+            onChange={(v) => onChange({ ...block, url: v })}
+            onUpload={(url, file) => onChange({ ...block, url, name: block.name.trim() ? block.name : file.name.slice(0, 200) })}
+            hint='Upload a file (up to 25 MB) or paste a link.'
+          />
           <Field label='File name shown to learners (optional)'>
             <TextLine value={block.name} onChange={(v) => onChange({ ...block, name: v })} placeholder='e.g. Refund checklist (PDF)' />
           </Field>
@@ -896,6 +1461,20 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
       return <ItemsEditor noun='Section' items={block.items} onChange={(items) => onChange({ ...block, items })} />;
     case 'tabs':
       return <ItemsEditor noun='Tab' items={block.items} onChange={(items) => onChange({ ...block, items })} />;
+    case 'process':
+      return (
+        <div className='flex flex-col gap-2'>
+          <div className='text-xs text-text-tertiary'>People see one step at a time, with Back and Next buttons. Use 2 to 12 steps.</div>
+          <ItemsEditor
+            noun='Step'
+            min={2}
+            max={12}
+            textPlaceholder='What to do in this step'
+            items={block.items}
+            onChange={(items) => onChange({ ...block, items })}
+          />
+        </div>
+      );
     case 'flashcards':
       return <CardsEditor cards={block.cards} onChange={(cards) => onChange({ ...block, cards })} />;
     case 'continue':
@@ -923,7 +1502,7 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
   }
 }
 
-/** One block in the lesson editor: its name, move/duplicate/delete controls, and its fields. */
+/** One block in the lesson editor: its name, drag grip, move/duplicate/delete controls, and its fields. */
 export function BlockCard({
   block,
   index,
@@ -933,6 +1512,9 @@ export function BlockCard({
   onDuplicate,
   onDelete,
   onAddBelow,
+  onGrab,
+  dragging,
+  dropEdge = null,
 }: {
   block: Block;
   index: number;
@@ -942,12 +1524,23 @@ export function BlockCard({
   onDuplicate: () => void;
   onDelete: () => void;
   onAddBelow: () => void;
+  /** Starts dragging this block (from the grip). */
+  onGrab?: (e: ReactPointerEvent<HTMLElement>) => void;
+  dragging?: boolean;
+  dropEdge?: DropEdge;
 }) {
   const info = BLOCK_INFO[block.type];
 
   return (
-    <div id={`chs-b-${block.id}`} className='scroll-mt-4 rounded-[12px] border border-border-primary' data-testid='carehub-learning-block'>
-      <div className='flex items-center gap-0.5 border-b border-border-primary py-1 pl-3 pr-1'>
+    <div
+      id={`chs-b-${block.id}`}
+      data-drag-item=''
+      className={cn('relative scroll-mt-4 rounded-[12px] border border-border-primary', dragging && 'opacity-50')}
+      data-testid='carehub-learning-block'
+    >
+      <DropLine edge={dropEdge} gap={12} />
+      <div className={cn('flex items-center gap-0.5 border-b border-border-primary py-1 pr-1', onGrab ? 'pl-1' : 'pl-3')}>
+        {onGrab && <DragGrip onPointerDown={onGrab} />}
         <span className='mr-1.5' aria-hidden='true'>
           {info.emoji}
         </span>
