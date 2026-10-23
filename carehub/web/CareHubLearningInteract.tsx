@@ -88,7 +88,7 @@ export interface Marker {
 export interface InteractQuestionFields {
   /** fill_blank: the accepted answers. */
   answers?: string[];
-  /** fill_blank: capital letters must match. */
+  /** fill_blank: capital letters must match (final-quiz questions have it only when the server sends it). */
   case_sensitive?: boolean;
   /** fill_blank, final quiz only: the server took the accepted answers out. */
   blank?: boolean;
@@ -222,12 +222,20 @@ function arrayMove<T>(list: T[], from: number, to: number): T[] {
 
 /** Same rule as urlAllowed in CareHubLearningApi: https://, a Care Hub link starting with /, or localhost. */
 export function pictureLinkOk(url: string) {
+  // Like the server: no control characters anywhere in the link, not even around it.
+  for (let i = 0; i < url.length; i++) {
+    const c = url.charCodeAt(i);
+
+    if (c <= 0x1f || c === 0x7f) return false;
+  }
+
   const u = url.trim();
 
   if (!u) return false;
   if (/^https:\/\/\S+$/i.test(u)) return true;
   if (/^http:\/\/localhost(:\d+)?(\/\S*)?$/i.test(u)) return true;
-  return u.startsWith('/') && !u.startsWith('//');
+  // "//host/x.png" and "/\host/x.png" would load a picture from another website.
+  return u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\');
 }
 
 export function isInteractKind(kind: unknown): kind is InteractKind {
@@ -282,7 +290,12 @@ export function interactFields(raw: unknown, kind: string): InteractQuestionFiel
       case_sensitive: o.case_sensitive === true,
     };
 
-    if (o.blank === true) f.blank = true;
+    if (o.blank === true) {
+      f.blank = true;
+      // Final-quiz questions: only what the server says (missing = this page can't tell).
+      if (typeof o.case_sensitive !== 'boolean') delete f.case_sensitive;
+    }
+
     return f;
   }
 
@@ -987,9 +1000,11 @@ export type InteractViewProps = {
   useSrc?: UsePictureSrc;
 };
 
-/** Right, wrong, or '' when this page can't tell (final-quiz questions don't say whether capitals must match). */
+/** Right, wrong, or '' when this page can't tell (a final-quiz question that doesn't say whether capitals must match). */
 function blankMark(q: InteractQuestion, typed: string, accepted: string[]): '' | 'ok' | 'no' {
-  if (q.blank !== true) return blankRight(typed, accepted, q.case_sensitive === true) ? 'ok' : 'no';
+  const known = q.blank !== true || typeof q.case_sensitive === 'boolean';
+
+  if (known) return blankRight(typed, accepted, q.case_sensitive === true) ? 'ok' : 'no';
   if (blankRight(typed, accepted, true)) return 'ok';
   return blankRight(typed, accepted, false) ? '' : 'no';
 }
