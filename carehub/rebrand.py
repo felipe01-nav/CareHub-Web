@@ -1311,5 +1311,28 @@ EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
 # CareHub: Google Calendar through a Google Apps Script (no Google Cloud console).
 EXTRA_FILES[HERE / "web" / "CareHubGoogleScript.tsx"] = "src/components/carehub/CareHubGoogleScript.tsx"
 
+# ---------------------------------------------------------------------------
+# CareHub Learning: courses (Studio), the course player, My learning + Catalog.
+# ---------------------------------------------------------------------------
+for _name in [
+    "CareHubLearningApi.ts", "CareHubLearning.tsx", "CareHubLearningBlocks.tsx", "CareHubLearningPlayer.tsx",
+    "CareHubLearningStudio.tsx", "CareHubLearningStudioBlocks.tsx", "CareHubLearningExample.ts",
+]:
+    EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
+
+EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
+    ("import CareHubAnalyticsPage from '@/components/carehub/CareHubAnalytics';\n",
+     "import CareHubAnalyticsPage from '@/components/carehub/CareHubAnalytics';\n"
+     "import CareHubLearningPage from '@/components/carehub/CareHubLearning';\n", 1),
+    ("        <Route path={'analytics'} element={<CareHubAnalyticsPage />} />\n",
+     "        <Route path={'analytics'} element={<CareHubAnalyticsPage />} />\n"
+     "        <Route path={'learning/*'} element={<CareHubLearningPage />} />\n", 1),
+])
+
+EDITS.setdefault("src/components/app/header/AppHeader.tsx", []).extend([
+    ("|| window.location.pathname === '/app/analytics';\n",
+     "|| window.location.pathname === '/app/analytics' || window.location.pathname.startsWith('/app/learning');\n", 1),
+])
+
 if __name__ == "__main__":
     sys.exit(main())

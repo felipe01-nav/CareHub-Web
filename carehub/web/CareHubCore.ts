@@ -81,6 +81,9 @@ export type CareHubPerm =
   | 'templates'
   | 'analytics'
   | 'automations'
+  | 'learning_build'
+  | 'learning_assign'
+  | 'learning_analytics'
   | 'admin';
 
 export const CAREHUB_PERMS: { id: CareHubPerm; label: string; hint: string }[] = [
@@ -92,6 +95,9 @@ export const CAREHUB_PERMS: { id: CareHubPerm; label: string; hint: string }[] =
   { id: 'templates', label: 'Manage templates', hint: 'Save pages as templates and remove them' },
   { id: 'analytics', label: 'See analytics', hint: 'Who viewed and edited what' },
   { id: 'automations', label: 'Manage automations', hint: 'Scheduled and automatic messages' },
+  { id: 'learning_build', label: 'Build courses', hint: 'Create, edit and publish courses, and see their reports' },
+  { id: 'learning_assign', label: 'Assign courses (coming soon)', hint: 'Assign courses with due dates (next phase)' },
+  { id: 'learning_analytics', label: 'See course reports', hint: 'Read-only course and people reports, CSV export' },
   { id: 'admin', label: 'Admin', hint: 'Roles, data & backups, everything above' },
 ];
 
@@ -165,7 +171,10 @@ export function useCareHubMe(workspaceId?: string | null): CareHubMe | null {
 
 /** Before the role is known, everyday things are allowed and admin things hidden. */
 export function carehubCan(me: CareHubMe | null | undefined, perm: CareHubPerm) {
-  if (!me) return !['analytics', 'automations', 'admin'].includes(perm);
+  if (!me) {
+    return !['analytics', 'automations', 'learning_build', 'learning_assign', 'learning_analytics', 'admin'].includes(perm);
+  }
+
   return me.perms.includes('admin') || me.perms.includes(perm);
 }
 
