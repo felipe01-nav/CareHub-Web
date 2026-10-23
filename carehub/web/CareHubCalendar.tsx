@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 import { expandIcs, IcsEvent, parseIcs } from './CareHubIcs';
+import { GoogleScriptConnect } from './CareHubGoogleScript';
 import { CareHubEventActions } from './CareHubMeetingNotes';
 
 export const CAREHUB_CALENDAR_PATH = '/app/calendar';
@@ -84,6 +85,10 @@ interface ICloudCalendar {
 interface ICloudStatus {
   enabled: boolean;
   connected: boolean;
+  /** Google: sign-in app set up (OAuth) / Apps Script bridge possible / which one is connected. */
+  oauth?: boolean;
+  script?: boolean;
+  mode?: string;
   apple_id?: string;
   calendars?: ICloudCalendar[];
   error?: string;
@@ -1981,6 +1986,16 @@ function GoogleSection({
   const [error, setError] = useState('');
   const [confirmOff, setConfirmOff] = useState(false);
 
+  const reloadStatus = async () => {
+    try {
+      const res = await call<ICloudStatus>('get', `${API}/google`);
+
+      if (res) onChanged(res);
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+
   if (!status.enabled) {
     return (
       <div className='mt-1 px-2 py-1.5 text-xs text-text-tertiary' data-testid='carehub-google-off'>
@@ -2009,7 +2024,7 @@ function GoogleSection({
     try {
       await call('delete', `${API}/google`);
       setConfirmOff(false);
-      onChanged({ enabled: true, connected: false });
+      onChanged({ ...status, enabled: true, connected: false, calendars: [], mode: undefined });
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -2053,17 +2068,28 @@ function GoogleSection({
     );
   }
 
+  const oauth = status.oauth !== false;
+
   return (
     <div>
-      <button
-        type='button'
-        disabled={busy}
-        onClick={() => void connect()}
-        className='mt-1 w-full rounded-[8px] px-2 py-1.5 text-left text-sm text-text-secondary hover:bg-fill-content-hover hover:text-text-primary'
-        data-testid='carehub-google-connect'
-      >
-        {busy ? 'Opening Google…' : '+ Connect Google Calendar (private)'}
-      </button>
+      {oauth && (
+        <button
+          type='button'
+          disabled={busy}
+          onClick={() => void connect()}
+          className='mt-1 w-full rounded-[8px] px-2 py-1.5 text-left text-sm text-text-secondary hover:bg-fill-content-hover hover:text-text-primary'
+          data-testid='carehub-google-connect'
+        >
+          {busy ? 'Opening Google…' : '+ Connect Google Calendar (private)'}
+        </button>
+      )}
+      {status.script && (
+        <GoogleScriptConnect
+          apiBase={API}
+          onConnected={() => void reloadStatus()}
+          label={oauth ? '+ Work account? Connect with a Google script' : undefined}
+        />
+      )}
       {error && <div className='px-2 pb-1 text-xs text-text-error'>{error}</div>}
     </div>
   );
