@@ -2,7 +2,7 @@
 // person deploys in their own Google account. For company Google accounts
 // where the Google Cloud console (and so a Google sign-in app) isn't available.
 import { useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 import { executeAPIRequest, getAxios } from '@/application/services/js-services/http/core';
 import { Button } from '@/components/ui/button';
@@ -139,6 +139,17 @@ function newKey() {
   return Array.from(bytes, (b) => chars[b % chars.length]).join('');
 }
 
+const QUOTES = `'"\`\u2018\u2019\u201c\u201d`;
+
+/** Accepts the password itself, the password in quotes, or the whole `const CAREHUB_KEY = '…';` line. */
+export function cleanScriptKey(raw: string) {
+  const s = (raw || '').trim();
+  const line = s.match(new RegExp(`CAREHUB_KEY\\s*=\\s*[${QUOTES}]([^${QUOTES}]*)[${QUOTES}]`));
+
+  if (line) return line[1].trim();
+  return s.replace(new RegExp(`^[\\s${QUOTES}]+|[\\s${QUOTES};]+$`, 'g'), '').trim();
+}
+
 function savedKey() {
   try {
     return sessionStorage.getItem(KEY_STORE) || '';
@@ -173,6 +184,8 @@ export function GoogleScriptConnect({
 }) {
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState(savedKey);
+  const [autoKey, setAutoKey] = useState(() => !!savedKey());
+  const [showKey, setShowKey] = useState(false);
   const [url, setUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const [showScript, setShowScript] = useState(false);
@@ -180,11 +193,12 @@ export function GoogleScriptConnect({
   const [error, setError] = useState('');
 
   const ensureKey = () => {
-    let k = key;
+    let k = cleanScriptKey(key);
 
-    if (!k) {
+    if (k.length < 16) {
       k = newKey();
       setKey(k);
+      setAutoKey(true);
       try {
         sessionStorage.setItem(KEY_STORE, k);
       } catch {
@@ -213,9 +227,13 @@ export function GoogleScriptConnect({
       return;
     }
 
-    if (key.trim().length < 16) {
+    const k = cleanScriptKey(key);
+
+    if (k.length < 16) {
       setError(
-        "Care Hub doesn't know your script's password. In Apps Script, copy the text between the quotes on the line const CAREHUB_KEY = '…' and paste it in the Password box above."
+        k
+          ? `The script password is only ${k.length} characters, so part of it is missing. In Apps Script, click three times on the line const CAREHUB_KEY = '…' to select the whole line, copy it (⌘C) and paste it in the Script password box above (⌘V).`
+          : "Care Hub doesn't know your script's password. In Apps Script, click three times on the line const CAREHUB_KEY = '…' to select the whole line, copy it (⌘C) and paste it in the Script password box above (⌘V)."
       );
       return;
     }
@@ -223,7 +241,7 @@ export function GoogleScriptConnect({
     setBusy(true);
     setError('');
     try {
-      await call('post', `${apiBase}/google/script`, { url: url.trim(), key: key.trim() });
+      await call('post', `${apiBase}/google/script`, { url: url.trim(), key: k });
       try {
         sessionStorage.removeItem(KEY_STORE);
       } catch {
@@ -285,11 +303,11 @@ export function GoogleScriptConnect({
                 <div className='mt-1 text-xs text-text-tertiary'>
                   It already contains a new private password that Care Hub made for you.
                 </div>
-                {showScript && key && (
+                {showScript && cleanScriptKey(key).length >= 16 && (
                   <textarea
                     readOnly
                     className='mt-2 h-40 w-full rounded-[8px] border border-border-primary bg-transparent p-2 font-mono text-[11px]'
-                    value={carehubGoogleScriptText(key)}
+                    value={carehubGoogleScriptText(cleanScriptKey(key))}
                     onFocus={(e) => e.currentTarget.select()}
                   />
                 )}
@@ -329,36 +347,52 @@ export function GoogleScriptConnect({
                 />
               </Step>
             </ol>
-            {key ? (
-              <details className='text-xs text-text-secondary'>
-                <summary className='cursor-pointer'>Password (filled in for you)</summary>
+            <div className='flex flex-col gap-1 text-xs text-text-secondary'>
+              <div className='font-medium text-text-primary'>Script password</div>
+              <div>
+                {autoKey ? (
+                  <>Filled in for you when you copied the script. Only change it if you changed CAREHUB_KEY in the script.</>
+                ) : (
+                  <>
+                    Set the script up earlier? In Apps Script, click three times on the line{' '}
+                    <code>const CAREHUB_KEY = &apos;…&apos;</code> to select the whole line, copy it (⌘C) and paste it
+                    here (⌘V). Pasting the whole line is fine. New here? Click Copy the script above and this fills in by
+                    itself.
+                  </>
+                )}
+              </div>
+              <div className='flex items-center gap-2'>
                 <Input
-                  className='mt-1.5'
-                  type='password'
+                  className='flex-1 font-mono'
+                  type='text'
+                  name='carehub-script-key'
+                  autoComplete='off'
+                  spellCheck={false}
+                  data-1p-ignore='true'
+                  data-lpignore='true'
+                  style={showKey ? undefined : ({ WebkitTextSecurity: 'disc' } as CSSProperties)}
                   value={key}
-                  onChange={(e) => setKey(e.target.value)}
-                  placeholder='The CAREHUB_KEY from the script'
-                />
-                <div className='mt-1'>Only change this if you edited CAREHUB_KEY in the script yourself.</div>
-              </details>
-            ) : (
-              <div className='text-xs text-text-secondary'>
-                <div className='font-medium text-text-primary'>Password</div>
-                <div className='mt-0.5'>
-                  Already pasted a script from Care Hub earlier? In Apps Script, copy the text between the quotes on the
-                  line <code>const CAREHUB_KEY = &apos;…&apos;</code> and paste it here. Otherwise click Copy the script
-                  above and it fills in by itself.
-                </div>
-                <Input
-                  className='mt-1.5'
-                  type='password'
-                  value={key}
-                  onChange={(e) => setKey(e.target.value)}
-                  placeholder='The CAREHUB_KEY from the script'
+                  onChange={(e) => {
+                    setKey(e.target.value);
+                    setError('');
+                  }}
+                  placeholder='Paste the CAREHUB_KEY line here'
                   data-testid='carehub-google-script-key'
                 />
+                <button type='button' className='shrink-0 underline' onClick={() => setShowKey(!showKey)}>
+                  {showKey ? 'Hide' : 'Show'}
+                </button>
               </div>
-            )}
+              {key.trim() &&
+                (cleanScriptKey(key).length >= 16 ? (
+                  <div style={{ color: '#16a34a' }}>✓ Looks right ({cleanScriptKey(key).length} characters)</div>
+                ) : (
+                  <div style={{ color: '#d97706' }}>
+                    Only {cleanScriptKey(key).length} characters. The password in the script is 32 characters, so copy the
+                    whole line.
+                  </div>
+                ))}
+            </div>
             <div className='text-xs text-text-tertiary'>
               If &quot;Anyone&quot; isn&apos;t offered under &quot;Who has access&quot;, your company has turned this
               off and it won&apos;t work with this account.
