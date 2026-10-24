@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 
 import { chCall, CH_API, formatWhen, UUID_RE } from './CareHubCore';
 import { formatDuration, isTransientError, LEARNING_PATH, learningNotLive, lErrorText, num, plural, statusInfo, str } from './CareHubLearningApi';
+import { learningTitle, usePageTitle } from './CareHubLearningA11y';
 // CareHubLearningAssignApi also imports reportsApi from this file. That's fine: each side only uses the other
 // inside functions, never while the files are first loaded.
 import { assignCoursePath, certificatePath, groupPath, shortDate } from './CareHubLearningAssignApi';
@@ -1152,14 +1153,20 @@ function StatusCell({
     <span className='inline-flex flex-wrap items-center gap-1'>
       <Chip tone={info.tone}>{info.label}</Chip>
       {p?.expired && (
-        <Chip tone='amber' title={p.expires_ms ? `Expired on ${shortDate(p.expires_ms)}` : undefined}>
-          Expired
-        </Chip>
+        <>
+          <Chip tone='amber' title={p.expires_ms ? `Expired on ${shortDate(p.expires_ms)}` : undefined}>
+            Expired
+          </Chip>
+          {p.expires_ms ? <span className='sr-only'>{` on ${shortDate(p.expires_ms)}`}</span> : null}
+        </>
       )}
       {older > 0 && (
-        <span className='text-[11px] text-text-tertiary' title={`Taking version ${older}. The latest is version ${latest}.`}>
-          v{older}
-        </span>
+        <>
+          <span className='text-[11px] text-text-tertiary' title={`Taking version ${older}. The latest is version ${latest}.`} aria-hidden='true'>
+            v{older}
+          </span>
+          <span className='sr-only'>{`Taking version ${older}. The latest is version ${latest}.`}</span>
+        </>
       )}
     </span>
   );
@@ -1231,8 +1238,10 @@ function assignedFor(c: CourseSummary, by: Map<string, TeamCourseStat>): { assig
 /** The reports home: the Overview tab, or the course list with `?tab=courses`. */
 export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId: string; canBuild: boolean }) {
   const { search } = useLocation();
+  const courses = new URLSearchParams(search).get('tab') === 'courses';
 
-  if (new URLSearchParams(search).get('tab') === 'courses') {
+  usePageTitle(learningTitle(courses ? 'Courses' : '', 'Reports'));
+  if (courses) {
     return <ReportsCourseList workspaceId={workspaceId} canBuild={canBuild} />;
   }
   return <LearningReportsOverview workspaceId={workspaceId} nav={<ReportsNav active='overview' />} />;
@@ -1613,6 +1622,7 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
   const showDue = Boolean(insights && insights.due.some((d) => d.due_ms !== null || d.overdue));
   const cols = useMemo(() => courseCols(quiz, latest, showDue, (code) => navigate(certificatePath(code))), [quiz, latest, showDue, navigate]);
 
+  usePageTitle(learningTitle(data?.course.title || '', 'Reports'));
   const back = <BackLink label='All courses' onClick={() => navigate(COURSES_PATH)} />;
 
   if (!data) {
@@ -2187,6 +2197,7 @@ function ResetDialog({
 type PeopleFilter = 'all' | 'started' | 'not_started';
 
 export function LearningReportsPeople({ workspaceId }: { workspaceId: string }) {
+  usePageTitle(learningTitle('People', 'Reports'));
   const navigate = useNavigate();
   const load = useCallback(() => reportsApi.people(workspaceId), [workspaceId]);
   const { data, error, reload } = useLoad(load);
@@ -2392,6 +2403,7 @@ function PersonReportView({ workspaceId, uid }: { workspaceId: string; uid: stri
     return list;
   }, [archived, hasScores, hasAcks]);
 
+  usePageTitle(learningTitle(data ? nameOf(data.report.person) : '', 'Reports'));
   const back = <BackLink label='People' onClick={() => navigate(PEOPLE_PATH)} />;
 
   if (!data) {
@@ -2575,6 +2587,7 @@ const TEAM_COURSE_COLS: Col<TeamCourseStat>[] = [
 ];
 
 export function LearningReportsTeams({ workspaceId }: { workspaceId: string }) {
+  usePageTitle(learningTitle('Teams', 'Reports'));
   const navigate = useNavigate();
   const load = useCallback(() => reportsApi.teams(workspaceId), [workspaceId]);
   const { data, error, reload } = useLoad(load);
