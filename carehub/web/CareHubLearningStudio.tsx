@@ -35,6 +35,7 @@ import {
 import { Chip, CourseCover } from './CareHubLearningBlocks';
 import { EXAMPLES } from './CareHubLearningExample';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
+import { PasteTextDialog } from './CareHubLearningPaste';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import {
   AddButton,
@@ -910,6 +911,7 @@ type EditorModal =
   | { kind: 'publish' }
   | { kind: 'versions' }
   | { kind: 'library'; lessonId: string; index: number }
+  | { kind: 'paste'; lessonId: string }
   | { kind: 'delete_lesson'; lessonId: string }
   | null;
 
@@ -1504,6 +1506,9 @@ function Editor({
                 <Button type='button' size='sm' onClick={() => setModal({ kind: 'library', lessonId: lesson.id, index: 0 })}>
                   + Add a block
                 </Button>
+                <Button type='button' size='sm' variant='outline' className='ml-2' onClick={() => setModal({ kind: 'paste', lessonId: lesson.id })}>
+                  Paste text
+                </Button>
               </div>
             </div>
           ) : (
@@ -1538,6 +1543,7 @@ function Editor({
           {lesson.blocks.length > 0 && (
             <AddButton onClick={() => setModal({ kind: 'library', lessonId: lesson.id, index: lesson.blocks.length })}>Add a block</AddButton>
           )}
+          {lesson.blocks.length > 0 && <AddButton onClick={() => setModal({ kind: 'paste', lessonId: lesson.id })}>Paste text</AddButton>}
         </div>
       </div>
     );
@@ -1984,6 +1990,7 @@ function Editor({
         {modal?.kind === 'library' && (
           <BlockLibrary onPick={(t) => addBlock(modal.lessonId, modal.index, t)} onClose={() => setModal(null)} />
         )}
+        <PasteTextDialog lessonId={modal?.kind === 'paste' ? modal.lessonId : ''} draft={draft} update={update} setUndo={setUndo} onClose={() => setModal(null)} />
         {modal?.kind === 'preview' && (
           <PreviewModal
             workspaceId={workspaceId}
