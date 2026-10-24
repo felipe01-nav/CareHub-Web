@@ -19,6 +19,7 @@ import { assignedDone } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
 import { LearningCertificate, LearningHeaderLinks, LearningMyCertificates, LearningVerify } from './CareHubLearningCertificate';
 import { LearningReviewPage } from './CareHubLearningDrafts';
+import { cardTopics, catalogTopics, hasTopic, TopicChips, TopicFilter } from './CareHubLearningLook';
 import { LearningPathsPage, useMyPaths, YourLearningPaths } from './CareHubLearningPaths';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import {
@@ -133,6 +134,7 @@ function CourseTile({ course, onOpen }: { course: CourseCard; onOpen: () => void
           )}
         </div>
         {course.summary.trim() && <div className='chl-clamp2 text-sm text-text-secondary'>{course.summary}</div>}
+        <TopicChips topics={cardTopics(course)} />
         <div className='mt-auto flex items-center gap-2 pt-1'>
           <span className='min-w-0 flex-1 truncate text-xs text-text-tertiary'>{courseMeta(course)}</span>
           <span className='shrink-0 text-sm font-medium text-text-action'>{action} →</span>
@@ -193,6 +195,7 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
   const [catalog, setCatalog] = useState<CourseCard[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [query, setQuery] = useState('');
+  const [topic, setTopic] = useState(''); // '' = all topics
   const [reload, setReload] = useState(0);
   // Courses assigned to me (undefined while loading, null when that part of the server isn't there yet).
   const assigned = useAssignedCourses(workspaceId, reload);
@@ -233,12 +236,15 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
   const assignedTodo = useMemo(() => new Set((assigned || []).filter((c) => !assignedDone(c)).map((c) => c.id)), [assigned]);
   const inProgress = useMemo(() => (my || []).filter((c) => c.my && !isFinished(c.my) && !c.archived && !assignedTodo.has(c.id)), [my, assignedTodo]);
   const finished = useMemo(() => (my || []).filter((c) => c.my && isFinished(c.my)), [my]);
+  // Topics in use (A–Z) for the Topic filter; a picked topic that's gone (the Catalog reloaded) counts as All.
+  const topics = useMemo(() => catalogTopics(catalog || []), [catalog]);
+  const shownTopic = topics.some((t) => t.toLowerCase() === topic.toLowerCase()) ? topic : '';
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = (catalog || []).filter((c) => !c.archived);
+    const list = (catalog || []).filter((c) => !c.archived && hasTopic(c, shownTopic));
 
-    return q ? list.filter((c) => `${c.title} ${c.summary}`.toLowerCase().includes(q)) : list;
-  }, [catalog, query]);
+    return q ? list.filter((c) => `${c.title} ${c.summary} ${cardTopics(c).join(' ')}`.toLowerCase().includes(q)) : list;
+  }, [catalog, query, shownTopic]);
 
   if (error) {
     return (
@@ -308,6 +314,7 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
           />
         }
       >
+        <TopicFilter topics={topics} value={shownTopic} onChange={setTopic} />
         {visible.length ? (
           <div className='grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3'>
             {visible.map((c) => (
@@ -316,7 +323,11 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
           </div>
         ) : (
           <div className='rounded-[12px] border border-dashed border-border-primary px-4 py-6 text-center text-sm text-text-tertiary'>
-            {query.trim() ? `No courses match “${query.trim()}”.` : 'No courses in the catalog right now.'}
+            {query.trim()
+              ? `No courses match “${query.trim()}”${shownTopic ? ` in the topic “${shownTopic}”` : ''}.`
+              : shownTopic
+                ? `No courses with the topic “${shownTopic}”.`
+                : 'No courses in the catalog right now.'}
           </div>
         )}
       </ChSection>
