@@ -1034,6 +1034,19 @@ function lessonName(l: Lesson, i: number) {
   return l.title.trim() || `Lesson ${i + 1}`;
 }
 
+/** After a lesson move: the lesson that moved — the one whose row in the list has focus, else the one that moved furthest. */
+function movedLesson(a: Lesson[], b: Lesson[], focused: string) {
+  const was = new Map(a.map((l, i) => [l.id, i]));
+  const moved = b.flatMap((l, i) => {
+    const from = was.get(l.id);
+
+    return from === undefined || from === i ? [] : [{ id: l.id, far: Math.abs(from - i) }];
+  });
+
+  if (moved.some((m) => m.id === focused)) return focused;
+  return moved.reduce((best, m) => (m.far > best.far ? m : best), { id: '', far: 0 }).id;
+}
+
 function secondsText(n: number) {
   if (n < 60) return plural(n, 'second');
   const m = Math.floor(n / 60);
@@ -1248,6 +1261,8 @@ function Editor({
   const [said, setSaid] = useState({ text: '', n: 0 });
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [focusId, setFocusId] = useState('');
+  // A lesson's entry in the lesson list to focus after the next render (see focusLesson).
+  const [entryFocus, setEntryFocus] = useState('');
   const refocus = useRefocus();
   const land = useLanding(() => firstControl(panelRef.current));
   // drafts: review link + comments (header buttons, open-comment counts under blocks, their windows).
@@ -1385,6 +1400,12 @@ function Editor({
     put(next);
   };
 
+  /** Focus on a lesson's entry in the lesson list; its title when the list isn't shown (narrow, or scrolled away). */
+  const focusLesson = (id: string) => {
+    if (narrow) setFocusId('chs-lesson-title');
+    else setEntryFocus(id);
+  };
+
   /** Undo (back) or redo: opens the panel the change is in, scrolls to it, and keeps focus on the page. */
   const travel = (back: boolean, how: 'button' | 'key' | 'toast') => {
     const step = back ? history.undo() : history.redo();
@@ -1400,16 +1421,27 @@ function Editor({
     const near = gone ? next.lessons[Math.min(Math.max(i, 0), next.lessons.length - 1)] : undefined;
     const sel: Selected = !gone ? want : near ? { kind: 'lesson', id: near.id } : { kind: 'settings' };
     const keyOf = (x: Selected) => (x.kind === 'lesson' ? `lesson:${x.id}` : x.kind);
-    // A lesson change (not one of its blocks), undone with the keys or from a message: focus goes to the lesson's
-    // title. Never left on Delete, which may now belong to another lesson, so Enter again can't start a delete.
-    const toTitle = how !== 'button' && sel.kind === 'lesson' && (gone || where.spot?.kind === 'lesson') && !where.target.startsWith('chs-b-');
+    // A lesson change (not one of its blocks), undone or redone with the keys or from a message: focus goes to that
+    // lesson in the lesson list, so Ctrl+Z again keeps working. Never left on Delete, which may now belong to another
+    // lesson, so Enter again can't start a delete. (The toolbar's Undo / Redo keep focus.)
+    let lessonId = '';
+
+    if (how !== 'button' && !where.target.startsWith('chs-b-')) {
+      if (gone) lessonId = sel.kind === 'lesson' ? sel.id : '';
+      else if (where.spot?.kind === 'lesson') lessonId = where.spot.id;
+      else if (!where.spot) {
+        const row = document.activeElement?.closest('[data-drag-item]')?.querySelector('[id^="chs-outline-"]');
+
+        lessonId = movedLesson(step.before.lessons, step.after.lessons, row ? row.id.slice('chs-outline-'.length) : '');
+      }
+    }
 
     put(next);
     if (keyOf(sel) !== keyOf(selected)) setSelected(sel);
     setSaid((x) => ({ text: `${back ? 'Undone' : 'Redone'}: ${step.label}`, n: x.n + 1 }));
-    land(toTitle ? 'chs-lesson-title' : where.target);
+    land(lessonId && narrow ? 'chs-lesson-title' : where.target);
     if (how === 'button') refocus.later(back ? 'undo' : 'redo', back ? 'redo' : 'undo');
-    if (toTitle) setFocusId('chs-lesson-title');
+    if (lessonId) focusLesson(lessonId);
     else if (how === 'toast' && where.target) setFocusId(where.target);
   };
 
@@ -1494,6 +1526,27 @@ function Editor({
 
     setFocusId('');
   }, [focusId]);
+
+  // focusLesson: the entry, once it's on the page.
+  useEffect(() => {
+    if (!entryFocus) return;
+    setEntryFocus('');
+    const entry = document.getElementById(`chs-outline-${entryFocus}`);
+    const list = entry?.closest('nav');
+
+    // Scroll only the list (the page already shows the change).
+    if (entry && list) {
+      const e = entry.getBoundingClientRect();
+      const l = list.getBoundingClientRect();
+
+      if (e.top < l.top) list.scrollTop -= l.top - e.top;
+      else if (e.bottom > l.bottom) list.scrollTop += e.bottom - l.bottom;
+    }
+    const r = entry?.getBoundingClientRect();
+
+    if (entry && r && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight) entry.focus({ preventScroll: true });
+    else setFocusId('chs-lesson-title');
+  }, [entryFocus]);
 
   const lessons = draft.lessons;
 
@@ -1660,7 +1713,8 @@ function Editor({
     update((c) => ({ ...c, lessons: dropThensTo(c.lessons.filter((l) => l.id !== id), id) }));
     setSelected(neighbor ? { kind: 'lesson', id: neighbor.id } : { kind: 'settings' });
     setModal(null);
-    if (neighbor) setFocusId('chs-lesson-title');
+    // The next lesson in the list (its title when the list isn't shown), so Ctrl+Z straight away brings it back.
+    if (neighbor) focusLesson(neighbor.id);
     else refocus.later('add-lesson');
   };
 
@@ -2193,6 +2247,7 @@ function Editor({
             <DragGrip onPointerDown={lessonDrag.grab(i)} className='opacity-60 group-hover:opacity-100' />
             <button
               type='button'
+              id={`chs-outline-${l.id}`}
               aria-current={active ? 'true' : undefined}
               onClick={() => setSelected({ kind: 'lesson', id: l.id })}
               className={cn('flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-0.5 pr-2 text-left text-sm', active ? 'font-medium' : 'text-text-secondary')}

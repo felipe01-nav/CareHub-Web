@@ -1,6 +1,6 @@
 // CareHub Learning Studio: "Import from a spreadsheet" — quiz questions from a CSV file or rows pasted from Excel or
 // Google Sheets (tab-separated). The first row names the columns (any order, any case): Question, Type, Answer 1 …
-// Answer 6, Correct, Explanation, Points. Every row is checked first and shows as ready or with a plain reason; only
+// Answer 10, Correct, Explanation, Points. Every row is checked first and shows as ready or with a plain reason; only
 // the ready rows are added, as normal questions with new ids. The file is read in the browser with the people-import
 // CSV reader from CareHubAccounts (no new reader, nothing sent anywhere until the course or bank saves).
 import { useMemo, useRef, useState } from 'react';
