@@ -1364,6 +1364,7 @@ EXTRA_FILES[HERE / "web" / "CareHubLearningDrafts.tsx"] = "src/components/carehu
 EXTRA_FILES[HERE / "web" / "CareHubLearningHistory.tsx"] = "src/components/carehub/CareHubLearningHistory.tsx"  # Studio undo / redo
 EXTRA_FILES[HERE / "web" / "CareHubLearningQbank.tsx"] = "src/components/carehub/CareHubLearningQbank.tsx"  # surveys, question banks, drag matching
 EXTRA_FILES[HERE / "web" / "CareHubLearningBranching.tsx"] = "src/components/carehub/CareHubLearningBranching.tsx"  # side lessons + "After this lesson"
+EXTRA_FILES[HERE / "web" / "CareHubLearningBlocks4.tsx"] = "src/components/carehub/CareHubLearningBlocks4.tsx"  # two columns, code, quote carousel, divider / quote / image looks
 EXTRA_FILES[HERE / "web" / "CareHubLearningPaths.tsx"] = "src/components/carehub/CareHubLearningPaths.tsx"  # learning paths (paths3)
 EXTRA_FILES[HERE / "web" / "CareHubLearningA11y.tsx"] = "src/components/carehub/CareHubLearningA11y.tsx"  # keyboard + screen reader helpers
 

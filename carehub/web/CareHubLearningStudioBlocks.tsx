@@ -12,6 +12,7 @@ import { clampInt, EMBED_SITES, embedKind, newId, setQuestionKind, urlAllowed } 
 import { useRefocus } from './CareHubLearningA11y';
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
 import { BLOCKS3_INFO, Blocks3Editor, LessonLinkWrap, LinkBlockContext } from './CareHubLearningBlocks3';
+import { blocks4CardInfo, BLOCKS4_INFO, Blocks4Editor, blocks4MenuExtras, imageLayout, ImageLayoutFields } from './CareHubLearningBlocks4';
 import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
 import { OptionFeedbackEditor, SURVEY_INFO, SurveyEditor } from './CareHubLearningQbank';
 import { MediaExtrasFields } from './CareHubLearningPlayer3';
@@ -35,6 +36,7 @@ import type {
   Tone,
 } from './CareHubLearningApi';
 import type { Blocks3StudioKit } from './CareHubLearningBlocks3';
+import type { Blocks4StudioKit } from './CareHubLearningBlocks4';
 import type { PictureField } from './CareHubLearningInteract';
 
 // ---------------------------------------------------------------------------
@@ -63,12 +65,16 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
   scenario: { emoji: '💬', label: 'Scenario', hint: 'A branching conversation to practice' },
   labeled_graphic: LABELED_GRAPHIC_INFO,
   ...BLOCKS3_INFO,
+  ...BLOCKS4_INFO,
   survey: SURVEY_INFO,
   page_link: { emoji: '🔗', label: 'Care Hub page', hint: 'A link to a page in this workspace' },
 };
 
 export const BLOCK_GROUPS: { title: string; types: BlockType[] }[] = [
-  { title: 'Text', types: ['heading', 'paragraph', 'statement', 'quote', 'callout', 'list', 'table', 'timeline', 'divider'] },
+  {
+    title: 'Text',
+    types: ['heading', 'paragraph', 'statement', 'quote', 'quote_carousel', 'callout', 'list', 'columns', 'code', 'table', 'timeline', 'divider'],
+  },
   { title: 'Media', types: ['image', 'gallery', 'video', 'audio', 'file', 'embed'] },
   {
     title: 'Interactive',
@@ -85,23 +91,25 @@ export function BlockLibrary({ onPick, onClose, children }: { onPick: (t: BlockT
           <div key={g.title}>
             <div className='mb-2 text-xs font-semibold uppercase tracking-wide text-text-tertiary'>{g.title}</div>
             <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
-              {g.types.map((t) => (
-                <button
-                  key={t}
-                  type='button'
-                  onClick={() => onPick(t)}
-                  className='flex items-start gap-2.5 rounded-[10px] border border-border-primary px-3 py-2.5 text-left hover:bg-fill-content-hover'
-                  data-testid={`carehub-learning-add-${t}`}
-                >
-                  <span className='text-lg leading-6' aria-hidden='true'>
-                    {BLOCK_INFO[t].emoji}
-                  </span>
-                  <span className='min-w-0 flex-1'>
-                    <span className='block text-sm font-medium'>{BLOCK_INFO[t].label}</span>
-                    <span className='block text-xs text-text-tertiary'>{BLOCK_INFO[t].hint}</span>
-                  </span>
-                </button>
-              ))}
+              {g.types
+                .flatMap((t) => [{ key: t, ...BLOCK_INFO[t], pick: () => onPick(t) }, ...blocks4MenuExtras(t, () => onPick(t))])
+                .map((e) => (
+                  <button
+                    key={e.key}
+                    type='button'
+                    onClick={e.pick}
+                    className='flex items-start gap-2.5 rounded-[10px] border border-border-primary px-3 py-2.5 text-left hover:bg-fill-content-hover'
+                    data-testid={`carehub-learning-add-${e.key}`}
+                  >
+                    <span className='text-lg leading-6' aria-hidden='true'>
+                      {e.emoji}
+                    </span>
+                    <span className='min-w-0 flex-1'>
+                      <span className='block text-sm font-medium'>{e.label}</span>
+                      <span className='block text-xs text-text-tertiary'>{e.hint}</span>
+                    </span>
+                  </button>
+                ))}
             </div>
           </div>
         ))}
@@ -1478,9 +1486,12 @@ function ImageEditor({ block, onChange }: { block: BlockOf<'image'>; onChange: (
           <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
         </Field>
       </div>
-      <Field label='Size' className='self-start'>
-        <ChSelect value={block.width} options={WIDTHS} onChange={(v) => onChange({ ...block, width: v })} ariaLabel='Picture size' />
-      </Field>
+      <ImageLayoutFields block={block} onChange={onChange} info={BLOCK_INFO} />
+      {imageLayout(block) === 'plain' && (
+        <Field label='Size' className='self-start'>
+          <ChSelect value={block.width} options={WIDTHS} onChange={(v) => onChange({ ...block, width: v })} ariaLabel='Picture size' />
+        </Field>
+      )}
     </div>
   );
 }
@@ -1511,6 +1522,9 @@ const BLOCKS3_STUDIO: Blocks3StudioKit = {
   info: BLOCK_INFO,
   urlOk: urlAllowed,
 };
+
+/** What the two-column, code, quote carousel, divider and quote editors borrow (CareHubLearningBlocks4). */
+const BLOCKS4_STUDIO: Blocks4StudioKit = BLOCKS3_STUDIO;
 
 export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
   switch (block.type) {
@@ -1543,16 +1557,7 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
         </Field>
       );
     case 'quote':
-      return (
-        <div className='flex flex-col gap-3'>
-          <Field label='Quote'>
-            <TextBox value={block.text} rows={2} onChange={(v) => onChange({ ...block, text: v })} placeholder='What they said' />
-          </Field>
-          <Field label='Who said it (optional)'>
-            <TextLine value={block.cite} onChange={(v) => onChange({ ...block, cite: v })} placeholder='Name, role' />
-          </Field>
-        </div>
-      );
+      return <Blocks4Editor block={block} onChange={onChange} kit={BLOCKS4_STUDIO} />;
     case 'callout':
       return (
         <div className='flex flex-col gap-3'>
@@ -1579,7 +1584,7 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
         </div>
       );
     case 'divider':
-      return <div className='text-sm text-text-tertiary'>A line between sections. Nothing to fill in.</div>;
+      return <Blocks4Editor block={block} onChange={onChange} kit={BLOCKS4_STUDIO} />;
     case 'image':
       return <ImageEditor block={block} onChange={onChange} />;
     case 'video': {
@@ -1710,6 +1715,10 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
     case 'table':
     case 'buttons':
       return <Blocks3Editor block={block} onChange={onChange} kit={BLOCKS3_STUDIO} />;
+    case 'columns':
+    case 'code':
+    case 'quote_carousel':
+      return <Blocks4Editor block={block} onChange={onChange} kit={BLOCKS4_STUDIO} />;
     case 'survey':
       return <SurveyEditor block={block} onChange={onChange} />;
     case 'page_link':
@@ -1748,7 +1757,7 @@ export function BlockCard({
   dropEdge?: DropEdge;
   extra?: ReactNode;
 }) {
-  const info = BLOCK_INFO[block.type];
+  const info = blocks4CardInfo(block) || BLOCK_INFO[block.type];
   // Moving to the top or bottom disables the arrow pressed: focus the other one (WCAG 2.4.3).
   const refocus = useRefocus();
   const moveBy = (delta: number) => {
