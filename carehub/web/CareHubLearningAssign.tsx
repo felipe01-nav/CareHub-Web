@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 
 import { formatWhen, UUID_RE } from './CareHubCore';
 import { formatMinutes, isTransientError, LEARNING_PATH, learningNotLive, lErrorText, plural, statusInfo } from './CareHubLearningApi';
+import { learningTitle, usePageTitle } from './CareHubLearningA11y';
 import {
   aapi,
   ASSIGN_PATH,
@@ -1041,6 +1042,9 @@ function RemoveAssignmentDialog({
 // Assign tab: courses
 // ---------------------------------------------------------------------------
 
+/** What "Not in the catalog" means (a tooltip, and hidden text for screen readers). */
+const NOT_IN_CATALOG = 'Only people it’s assigned to (or who have the link) can find it';
+
 function CourseRow({ c, index, canAssign, onOpen, onAssign }: { c: AssignCourse; index: number; canAssign: boolean; onOpen: () => void; onAssign: () => void }) {
   return (
     <li className={cn(rowClass(index), 'flex flex-wrap items-center gap-x-4 gap-y-2')} data-testid='carehub-learning-assign-course'>
@@ -1048,7 +1052,12 @@ function CourseRow({ c, index, canAssign, onOpen, onAssign }: { c: AssignCourse;
         <span className='block break-words text-sm font-medium hover:underline'>{c.title}</span>
         <span className='mt-0.5 flex flex-wrap items-center gap-1'>
           {c.status === 'archived' && <Chip>Archived</Chip>}
-          {c.status === 'published' && !c.catalog && <Chip title='Only people it’s assigned to (or who have the link) can find it'>Not in the catalog</Chip>}
+          {c.status === 'published' && !c.catalog && (
+            <>
+              <Chip title={NOT_IN_CATALOG}>Not in the catalog</Chip>
+              <span className='sr-only'>{` ${NOT_IN_CATALOG}.`}</span>
+            </>
+          )}
           {c.status === 'published' && !c.assigned && <span className='text-xs text-text-tertiary'>Not assigned yet</span>}
         </span>
       </button>
@@ -1064,9 +1073,12 @@ function CourseRow({ c, index, canAssign, onOpen, onAssign }: { c: AssignCourse;
               Assign
             </Button>
           ) : (
-            <span className='text-xs text-text-tertiary' title={whyNotAssignable(c)}>
-              Can’t assign
-            </span>
+            <>
+              <span className='text-xs text-text-tertiary' title={whyNotAssignable(c)}>
+                Can’t assign
+              </span>
+              <span className='sr-only'>{` ${whyNotAssignable(c)}`}</span>
+            </>
           )}
         </span>
       )}
@@ -1075,6 +1087,7 @@ function CourseRow({ c, index, canAssign, onOpen, onAssign }: { c: AssignCourse;
 }
 
 function AssignCoursesView({ workspaceId, perms }: { workspaceId: string; perms: AssignPerms }) {
+  usePageTitle(learningTitle('Assign'));
   const navigate = useNavigate();
   const { canBuild, canReports, canAssign } = perms;
   const load = useCallback(() => loadAssignOverview(workspaceId, { canBuild, canReports }), [workspaceId, canBuild, canReports]);
@@ -1272,7 +1285,9 @@ function CourseAssignmentsView({ workspaceId, courseId, perms }: { workspaceId: 
   const [editing, setEditing] = useState<Assignment | null>(null);
   const [removing, setRemoving] = useState<Assignment | null>(null);
   const [notice, setNotice] = useFlash();
+  const named = data && (data.courses.find((c) => c.id === courseId)?.title || data.assignments.find((a) => a.course_id === courseId)?.course_title);
 
+  usePageTitle(learningTitle(named || '', 'Assign'));
   if (error && !data) {
     return (
       <>
@@ -1461,9 +1476,12 @@ function AssigneeRow({ p, index, canReports }: { p: Assignee; index: number; can
       <span className='flex flex-wrap items-center gap-1'>
         <Chip tone={chip.tone}>{chip.label}</Chip>
         {p.expired && (
-          <Chip tone='amber' title={p.expires_ms !== null ? `Expired on ${shortDate(p.expires_ms)}` : undefined}>
-            Expired
-          </Chip>
+          <>
+            <Chip tone='amber' title={p.expires_ms !== null ? `Expired on ${shortDate(p.expires_ms)}` : undefined}>
+              Expired
+            </Chip>
+            {p.expires_ms !== null && <span className='sr-only'>{` on ${shortDate(p.expires_ms)}`}</span>}
+          </>
         )}
         {p.overdue && <Chip tone='red'>Overdue</Chip>}
       </span>
@@ -1491,6 +1509,7 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
     [data]
   );
 
+  usePageTitle(learningTitle(data ? targetLabel(data.assignment.target) : '', data?.assignment.course_title || '', 'Assign'));
   if (error && !data) {
     return (
       <>
@@ -1751,6 +1770,7 @@ function NewGroupDialog({ workspaceId, onClose, onCreated }: { workspaceId: stri
 }
 
 function GroupsView({ workspaceId, perms }: { workspaceId: string; perms: AssignPerms }) {
+  usePageTitle(learningTitle('Groups', 'Assign'));
   const navigate = useNavigate();
   const load = useCallback(() => aapi.groups(workspaceId), [workspaceId]);
   const { data, error, reload } = useLoad(load);
@@ -1883,6 +1903,8 @@ function GroupDetailView({ workspaceId, groupId, perms }: { workspaceId: string;
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useFlash();
   const group = data?.group || null;
+
+  usePageTitle(learningTitle(group?.name || '', 'Groups', 'Assign'));
 
   // Start (again) from the saved group whenever it loads.
   useEffect(() => {
@@ -2332,9 +2354,12 @@ function AssignedCard({ course, onOpen, onRetake }: { course: AssignedCourse; on
             ) : (
               <>
                 {course.assignment.renewal && (
-                  <Chip tone='blue' title={RENEWAL_HINT}>
-                    Renewal
-                  </Chip>
+                  <>
+                    <Chip tone='blue' title={RENEWAL_HINT}>
+                      Renewal
+                    </Chip>
+                    <span className='sr-only'>{` ${RENEWAL_HINT}`}</span>
+                  </>
                 )}
                 {due && (
                   <Chip tone={due.tone} title={course.assignment.due_ms !== null ? `Due ${new Date(course.assignment.due_ms).toLocaleDateString()}` : undefined}>
