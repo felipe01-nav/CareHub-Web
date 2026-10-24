@@ -754,7 +754,8 @@ export function JumpArea({
   preview: boolean;
   isLocked: (index: number) => boolean;
   isDone: (lessonId: string) => boolean;
-  open: (lessonId: string) => void;
+  /** Branching: may return why it can't open yet (shown as a short message), or wait for the server first. */
+  open: (lessonId: string) => void | string | Promise<boolean>;
   children: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -796,7 +797,9 @@ export function JumpArea({
 
       if (!found) return say('That part is no longer in this course.');
       if (lockedAt(found)) return say(`${LOCKED_REASON}.`);
-      if (found.lessonId !== s.current) s.open(found.lessonId);
+      const opening = found.lessonId !== s.current ? s.open(found.lessonId) : undefined;
+
+      if (typeof opening === 'string') return say(opening);
       cancelAnimationFrame(frame.current);
       let frames = 0;
       const step = () => {
@@ -820,6 +823,14 @@ export function JumpArea({
           say('That part of the lesson comes after this Continue button.');
         } else if (heading) bringIntoView(heading);
       };
+
+      // Branching: a "Let them choose" lesson is finished on the server first, then the lesson picked opens.
+      if (opening instanceof Promise) {
+        void opening.then((ok) => {
+          if (ok) frame.current = requestAnimationFrame(step);
+        });
+        return;
+      }
 
       frame.current = requestAnimationFrame(step);
     },

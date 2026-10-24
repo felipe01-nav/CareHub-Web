@@ -37,6 +37,7 @@ import {
 } from './CareHubLearningApi';
 import { Chip, CourseCover } from './CareHubLearningBlocks';
 import { LinkCourseContext } from './CareHubLearningBlocks3';
+import { dropThensTo, isSide, LessonBranchSettings, SideLessonNote, withBranchFields } from './CareHubLearningBranching';
 import { useStudioReview, WithCommentCount } from './CareHubLearningDrafts';
 import { EXAMPLES } from './CareHubLearningExample';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
@@ -1452,7 +1453,8 @@ function Editor({
     if (i < 0) return;
     const neighbor = list[i + 1] || list[i - 1];
 
-    update((c) => ({ ...c, lessons: c.lessons.filter((l) => l.id !== id) }));
+    // Branching: "After this lesson" in other lessons stops pointing at it.
+    update((c) => ({ ...c, lessons: dropThensTo(c.lessons.filter((l) => l.id !== id), id) }));
     setSelected(neighbor ? { kind: 'lesson', id: neighbor.id } : { kind: 'settings' });
     setModal(null);
   };
@@ -1608,6 +1610,7 @@ function Editor({
             />
           </Field>
         </div>
+        <LessonBranchSettings lesson={lesson} lessons={lessons} onChange={(p) => setLesson(lesson.id, (l) => withBranchFields(l, p))} />
         <div ref={blockDrag.setList} className='flex flex-col gap-3'>
           {lesson.blocks.length === 0 ? (
             <div className='rounded-[12px] border border-dashed border-border-primary px-4 py-8 text-center text-sm text-text-secondary'>
@@ -1982,6 +1985,7 @@ function Editor({
               <span className='w-5 shrink-0 text-xs font-normal text-text-tertiary'>{i + 1}.</span>
               <span className={cn('min-w-0 flex-1 truncate', !l.title.trim() && 'italic text-text-tertiary')}>
                 {l.title.trim() || 'Untitled lesson'}
+                {isSide(l) && <SideLessonNote />}
               </span>
             </button>
             <span className='flex shrink-0 opacity-50 group-focus-within:opacity-100 group-hover:opacity-100'>
@@ -2020,7 +2024,7 @@ function Editor({
         className='min-w-0 flex-1'
         options={[
           { value: 'settings', label: '⚙️ Course settings' },
-          ...lessons.map((l, i) => ({ value: `lesson:${l.id}`, label: `${i + 1}. ${l.title.trim() || 'Untitled lesson'}` })),
+          ...lessons.map((l, i) => ({ value: `lesson:${l.id}`, label: `${i + 1}. ${l.title.trim() || 'Untitled lesson'}${isSide(l) ? ' (side lesson)' : ''}` })),
           { value: 'quiz', label: `📝 Final quiz${quiz.enabled ? '' : ' (off)'}` },
         ]}
         onChange={(v) =>
