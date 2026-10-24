@@ -42,6 +42,7 @@ import { dropThensTo, isSide, LessonBranchSettings, SideLessonNote, withBranchFi
 import { useStudioReview, WithCommentCount } from './CareHubLearningDrafts';
 import { EXAMPLES } from './CareHubLearningExample';
 import { describeChange, HistoryButtons, HistoryStatus, historyKey, useCourseHistory, useLanding } from './CareHubLearningHistory';
+import { ImportQuestionsDialog } from './CareHubLearningImport';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { PasteTextDialog } from './CareHubLearningPaste';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
@@ -121,6 +122,7 @@ const BANK_KIT: BankKit = {
   errorText: lErrorText,
   notLive: learningNotLive,
   transient: isTransientError,
+  ImportDialog: ImportQuestionsDialog,
 };
 
 function moveItem<T>(list: T[], from: number, to: number): T[] {
@@ -1237,6 +1239,8 @@ function Editor({
   );
   const [modal, setModal] = useState<EditorModal>(null);
   const [undo, setUndo] = useState<Undo | null>(null);
+  // "Import from a spreadsheet" (final quiz questions) is open.
+  const [importing, setImporting] = useState(false);
   // The Undo message stays until the course changes again, so its Undo always takes back the newest step.
   const offered = useRef<{ undo: Undo | null; after: Content | null }>({ undo: null, after: null });
   // Undo / redo for the whole course (CareHubLearningHistory): empty each time the editor opens, never saved.
@@ -1396,13 +1400,17 @@ function Editor({
     const near = gone ? next.lessons[Math.min(Math.max(i, 0), next.lessons.length - 1)] : undefined;
     const sel: Selected = !gone ? want : near ? { kind: 'lesson', id: near.id } : { kind: 'settings' };
     const keyOf = (x: Selected) => (x.kind === 'lesson' ? `lesson:${x.id}` : x.kind);
+    // A lesson change (not one of its blocks), undone with the keys or from a message: focus goes to the lesson's
+    // title. Never left on Delete, which may now belong to another lesson, so Enter again can't start a delete.
+    const toTitle = how !== 'button' && sel.kind === 'lesson' && (gone || where.spot?.kind === 'lesson') && !where.target.startsWith('chs-b-');
 
     put(next);
     if (keyOf(sel) !== keyOf(selected)) setSelected(sel);
     setSaid((x) => ({ text: `${back ? 'Undone' : 'Redone'}: ${step.label}`, n: x.n + 1 }));
-    land(where.target);
+    land(toTitle ? 'chs-lesson-title' : where.target);
     if (how === 'button') refocus.later(back ? 'undo' : 'redo', back ? 'redo' : 'undo');
-    if (how === 'toast' && where.target) setFocusId(where.target);
+    if (toTitle) setFocusId('chs-lesson-title');
+    else if (how === 'toast' && where.target) setFocusId(where.target);
   };
 
   const travelRef = useRef(travel);
@@ -1714,6 +1722,15 @@ function Editor({
     setFocusId(`chs-q-${q.id}`);
   };
 
+  /** Questions from a spreadsheet go after the others, as one undo step. */
+  const importQuestions = (list: Question[]) => {
+    setImporting(false);
+    if (!list.length) return;
+    update((c) => ({ ...c, quiz: { ...c.quiz, questions: [...c.quiz.questions, ...list] } }), `import ${plural(list.length, 'question')}`);
+    offerUndo(`Added ${plural(list.length, 'question')}.`);
+    setFocusId(`chs-q-${list[0].id}`);
+  };
+
   const toggleQuiz = (on: boolean) =>
     update((c) => ({
       ...c,
@@ -1949,6 +1966,9 @@ function Editor({
                     {b.label}
                   </AddButton>
                 ))}
+                <AddButton buttonRef={refocus.reg('import-questions')} onClick={() => setImporting(true)}>
+                  Import from a spreadsheet
+                </AddButton>
               </div>
             </div>
           </ChSection>
@@ -2335,6 +2355,7 @@ function Editor({
             <TemplatesSection templates={templates} onAdd={(list, label) => addBlocks(modal.lessonId, modal.index, list, label)} />
           </BlockLibrary>
         )}
+        {importing && <ImportQuestionsDialog onAdd={importQuestions} onClose={() => setImporting(false)} />}
         <PasteTextDialog
           lessonId={modal?.kind === 'paste' ? modal.lessonId : ''}
           draft={draft}

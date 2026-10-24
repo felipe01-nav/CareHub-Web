@@ -1604,6 +1604,8 @@ export interface BankKit {
   errorText: (err: unknown) => string;
   notLive: (err: unknown) => boolean;
   transient: (err: unknown) => boolean;
+  /** "Import from a spreadsheet" (CareHubLearningImport). `room`: how many more questions fit; `onAdd` gets the ready ones. */
+  ImportDialog?: ComponentType<{ room?: number; onAdd: (qs: Question[]) => void; onClose: () => void }>;
 }
 
 export function QuestionBanksPage({ workspaceId, bankId, studioPath, kit }: { workspaceId: string; bankId: string; studioPath: string; kit: BankKit }) {
@@ -1921,6 +1923,9 @@ function BankEditor({
   const [save, setSave] = useState<SaveState>('');
   const [saveError, setSaveError] = useState('');
   const [undo, setUndo] = useState<{ q: Question; index: number } | null>(null);
+  // Import from a spreadsheet: the window is open / what the last import added (Undo shows until the next change).
+  const [importing, setImporting] = useState(false);
+  const [imported, setImported] = useState<{ ids: string[]; after: Question[] } | null>(null);
   const refocus = useRefocus();
 
   usePageTitle(learningTitle(draft.title.trim() || (loaded ? 'Untitled bank' : ''), 'Question banks', 'Studio'));
@@ -2061,6 +2066,15 @@ function BankEditor({
     timerRef.current = window.setTimeout(() => void saveRef.current(), 1500);
   };
   const setQuestions = (fn: (qs: Question[]) => Question[]) => update((d) => ({ ...d, questions: fn(d.questions) }));
+  const addImported = (list: Question[]) => {
+    const add = list.slice(0, Math.max(0, BANK_QUESTIONS_MAX - draftRef.current.questions.length));
+
+    setImporting(false);
+    if (!add.length) return;
+    setQuestions((qs) => [...qs, ...add]);
+    setImported({ ids: add.map((q) => q.id), after: draftRef.current.questions });
+    refocus.later(`q:${add[0].id}`);
+  };
   const moveQ = (id: string, from: number, to: number) => {
     refocus.moved(id, to - from);
     setQuestions((qs) => {
@@ -2201,6 +2215,7 @@ function BankEditor({
           ))}
           <div role='status' className='sr-only'>
             {undo && <span key={undo.q.id}>Question deleted.</span>}
+            {imported && imported.after === qs && <span key={imported.ids[0]}>Added {count(imported.ids.length, 'question')}.</span>}
           </div>
           {undo && (
             <div className='flex flex-wrap items-center gap-2 rounded-[10px] bg-fill-content-hover px-3 py-2 text-sm'>
@@ -2222,6 +2237,25 @@ function BankEditor({
               </Button>
             </div>
           )}
+          {imported && imported.after === qs && (
+            <div className='flex flex-wrap items-center gap-2 rounded-[10px] bg-fill-content-hover px-3 py-2 text-sm'>
+              <span className='min-w-0 flex-1'>Added {count(imported.ids.length, 'question')} from a spreadsheet.</span>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={() => {
+                  const ids = new Set(imported.ids);
+
+                  refocus.later('import');
+                  setImported(null);
+                  setQuestions((list) => list.filter((x) => !ids.has(x.id)));
+                }}
+              >
+                Undo
+              </Button>
+            </div>
+          )}
           <div className='flex flex-wrap items-center gap-1'>
             <span className='mr-1 text-xs text-text-tertiary'>Add a question:</span>
             {kit.kinds.map((k) => (
@@ -2229,7 +2263,15 @@ function BankEditor({
                 {k.label}
               </AddLink>
             ))}
+            {kit.ImportDialog && (
+              <AddLink buttonRef={refocus.reg('import')} disabled={qs.length >= BANK_QUESTIONS_MAX} onClick={() => setImporting(true)}>
+                Import from a spreadsheet
+              </AddLink>
+            )}
           </div>
+          {importing && kit.ImportDialog && (
+            <kit.ImportDialog room={BANK_QUESTIONS_MAX - qs.length} onAdd={addImported} onClose={() => setImporting(false)} />
+          )}
           {qs.length >= BANK_QUESTIONS_MAX && <div className='text-xs text-text-tertiary'>A question bank can hold up to 200 questions.</div>}
         </div>
       </ChSection>
