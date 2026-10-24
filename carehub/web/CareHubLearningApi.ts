@@ -65,6 +65,7 @@ import {
 import type { Blocks3Block } from './CareHubLearningBlocks3';
 import type { Blocks4Block, DividerStyle, ImageLayout, ImageSide, SpacerSize } from './CareHubLearningBlocks4';
 import type { Box, InteractKind, InteractQuestionFields, LabeledGraphicBlock, Point } from './CareHubLearningInteract';
+import type { CoverLayout, Labels, SidebarMode } from './CareHubLearningLook';
 import type { OptionFeedback, QuizDraw, SavedSurvey, SurveyBlock } from './CareHubLearningQbank';
 
 export const LEARNING_PATH = '/app/learning';
