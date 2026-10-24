@@ -3,7 +3,7 @@
 // published versions.
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ReactNode } from 'react';
+import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ import {
   starterContent,
   validateContent,
 } from './CareHubLearningApi';
+import { firstControl, learningTitle, usePageTitle, useRefocus } from './CareHubLearningA11y';
 import { Chip, CourseCover } from './CareHubLearningBlocks';
 import { LinkCourseContext } from './CareHubLearningBlocks3';
 import { dropThensTo, isSide, LessonBranchSettings, SideLessonNote, withBranchFields } from './CareHubLearningBranching';
@@ -398,6 +399,7 @@ function StudioRowView({
   onArchive,
   onDelete,
   onReport,
+  reg,
 }: {
   row: StudioRow;
   busy: boolean;
@@ -406,13 +408,15 @@ function StudioRowView({
   onArchive: (archived: boolean) => void;
   onDelete: () => void;
   onReport?: () => void;
+  /** Lets the list put focus back on this row's buttons after an action (useRefocus). */
+  reg: (key: string) => (el: HTMLElement | null) => void;
 }) {
   const everPublished = row.published_version !== null;
   const who = row.updated_by_name || row.created_by_name;
 
   return (
     <div className='flex flex-col gap-2 rounded-[12px] border border-border-primary p-3 sm:flex-row sm:items-center' data-testid='carehub-learning-studio-row'>
-      <button type='button' className='min-w-0 flex-1 text-left' onClick={onEdit}>
+      <button ref={reg(`open:${row.id}`)} type='button' className='min-w-0 flex-1 text-left' onClick={onEdit}>
         <span className='flex min-w-0 flex-wrap items-center gap-2'>
           <span className='min-w-0 break-words font-medium'>{row.title}</span>
           <StatusChips status={row.status} version={row.published_version} unpublished={row.has_unpublished_changes} />
@@ -426,7 +430,7 @@ function StudioRowView({
         <Button type='button' size='sm' onClick={onEdit}>
           Edit
         </Button>
-        <Button type='button' size='sm' variant='outline' disabled={busy} onClick={onDuplicate}>
+        <Button ref={reg(`dup:${row.id}`)} type='button' size='sm' variant='outline' disabled={busy} onClick={onDuplicate}>
           Duplicate
         </Button>
         {everPublished && onReport && (
@@ -435,12 +439,12 @@ function StudioRowView({
           </Button>
         )}
         {row.status === 'published' && (
-          <Button type='button' size='sm' variant='ghost' disabled={busy} onClick={() => onArchive(true)}>
+          <Button ref={reg(`archive:${row.id}`)} type='button' size='sm' variant='ghost' disabled={busy} onClick={() => onArchive(true)}>
             Archive
           </Button>
         )}
         {row.status === 'archived' && (
-          <Button type='button' size='sm' variant='ghost' disabled={busy} onClick={() => onArchive(false)}>
+          <Button ref={reg(`unarchive:${row.id}`)} type='button' size='sm' variant='ghost' disabled={busy} onClick={() => onArchive(false)}>
             Unarchive
           </Button>
         )}
@@ -481,6 +485,9 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
   const [toDelete, setToDelete] = useState<StudioRow | null>(null);
   const [deleteError, setDeleteError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const refocus = useRefocus();
+  // Where focus goes when the list comes back after an action (the row's buttons may have changed or gone).
+  const focusNext = useRef<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -488,7 +495,10 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
     setError(null);
     lapi.studioList(workspaceId).then(
       (r) => {
-        if (alive) setRows(r);
+        if (!alive) return;
+        refocus.later(...focusNext.current);
+        focusNext.current = [];
+        setRows(r);
       },
       (e: unknown) => {
         if (alive) setError(e || new Error('Something went wrong. Please try again.'));
@@ -497,7 +507,17 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
     return () => {
       alive = false;
     };
-  }, [workspaceId, reload]);
+  }, [workspaceId, reload, refocus]);
+
+  const active = (rows || []).filter((r) => r.status !== 'archived');
+  const archived = (rows || []).filter((r) => r.status === 'archived');
+  const list = showArchived ? [...active, ...archived] : active;
+  // Focus keys for the rows either side of one that is going (the next one first).
+  const nextTo = (id: string) => {
+    const i = list.findIndex((r) => r.id === id);
+
+    return i < 0 ? [] : [list[i + 1], list[i - 1]].filter(Boolean).map((r) => `open:${r.id}`);
+  };
 
   const create = async (kind: 'new' | 'example', title: string, preset: Preset, content: Content) => {
     setCreating(kind);
@@ -517,16 +537,19 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
     }
   };
 
-  const act = async (row: StudioRow, run: () => Promise<unknown>, done: string) => {
+  const act = async (row: StudioRow, run: () => Promise<unknown>, done: string, pressed: string, after: string[]) => {
     setBusyId(row.id);
     setNotice(null);
     try {
       await run();
       setNotice({ tone: 'ok', text: done });
+      focusNext.current = after;
       setReload((n) => n + 1);
     } catch (e) {
       setNotice({ tone: 'error', text: lErrorText(e) });
     } finally {
+      // The button pressed was disabled while busy, which took focus off it.
+      refocus.later(pressed);
       setBusyId('');
     }
   };
@@ -537,6 +560,7 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
     setDeleteError('');
     try {
       await lapi.remove(workspaceId, toDelete.id);
+      focusNext.current = [...nextTo(toDelete.id), 'new'];
       setNotice({ tone: 'ok', text: `Deleted “${toDelete.title}”.` });
       setToDelete(null);
       setReload((n) => n + 1);
@@ -558,10 +582,6 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
     );
   }
 
-  const active = (rows || []).filter((r) => r.status !== 'archived');
-  const archived = (rows || []).filter((r) => r.status === 'archived');
-  const list = showArchived ? [...active, ...archived] : active;
-
   return (
     <div data-testid='carehub-learning-studio'>
       <div className='mb-4 flex flex-wrap items-center gap-2'>
@@ -582,6 +602,7 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
           Start from an example
         </Button>
         <Button
+          ref={refocus.reg('new')}
           type='button'
           disabled={Boolean(creating)}
           onClick={() => {
@@ -619,7 +640,13 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
               busy={busyId === r.id}
               onEdit={() => navigate(`${STUDIO_PATH}/${r.id}`)}
               onDuplicate={() =>
-                void act(r, () => lapi.duplicate(workspaceId, r.id), `Made a copy of “${r.title}”. It’s a draft until you publish it.`)
+                void act(
+                  r,
+                  () => lapi.duplicate(workspaceId, r.id),
+                  `Made a copy of “${r.title}”. It’s a draft until you publish it.`,
+                  `dup:${r.id}`,
+                  [`dup:${r.id}`]
+                )
               }
               onArchive={(on) =>
                 void act(
@@ -627,7 +654,10 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
                   () => lapi.archive(workspaceId, r.id, on),
                   on
                     ? `Archived “${r.title}”. Learners can’t open it any more; their records are kept.`
-                    : `“${r.title}” is available to learners again.`
+                    : `“${r.title}” is available to learners again.`,
+                  on ? `archive:${r.id}` : `unarchive:${r.id}`,
+                  // Archived rows are hidden unless shown: then the next row, the "Show archived" button or "+ New course".
+                  on ? [`unarchive:${r.id}`, ...nextTo(r.id), 'show-archived', 'new'] : [`archive:${r.id}`, `open:${r.id}`]
                 )
               }
               onDelete={() => {
@@ -635,10 +665,16 @@ function StudioCourses({ workspaceId }: { workspaceId: string }) {
                 setToDelete(r);
               }}
               onReport={() => navigate(`${LEARNING_PATH}/reports/course/${r.id}`)}
+              reg={refocus.reg}
             />
           ))}
           {archived.length > 0 && (
-            <button type='button' className='self-start px-1 py-1 text-sm text-text-secondary underline' onClick={() => setShowArchived((v) => !v)}>
+            <button
+              ref={refocus.reg('show-archived')}
+              type='button'
+              className='self-start px-1 py-1 text-sm text-text-secondary underline'
+              onClick={() => setShowArchived((v) => !v)}
+            >
               {showArchived ? 'Hide archived courses' : `Show archived courses (${archived.length})`}
             </button>
           )}
@@ -959,6 +995,7 @@ function VersionsModal({
 type SaveState = 'saved' | 'pending' | 'saving' | 'retrying';
 type Problem = '' | 'stale' | 'too_big' | 'error';
 type Selected = { kind: 'settings' } | { kind: 'quiz' } | { kind: 'lesson'; id: string };
+type Undo = { label: string; restore: () => void };
 type EditorModal =
   | { kind: 'preview'; content: Content; label: string; startLessonId?: string; back?: 'versions' }
   | { kind: 'publish' }
@@ -1095,6 +1132,8 @@ export function LearningStudioEditor({ workspaceId }: { workspaceId: string }) {
       alive = false;
     };
   }, [workspaceId, courseId, valid, key]);
+  // Until the course is open (then the editor names the tab after it).
+  usePageTitle(loaded?.key === key ? null : learningTitle('Studio'));
 
   if (!valid) return <Navigate to={STUDIO_PATH} replace />;
 
@@ -1125,6 +1164,83 @@ export function LearningStudioEditor({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+/**
+ * "Block deleted. Undo" at the bottom of the editor. It goes after 8 seconds, but not while the pointer or keyboard
+ * focus is on it (WCAG 2.2.1), and a status region that is always on the page reads it out (4.1.3).
+ */
+function UndoToast({ undo, setUndo }: { undo: Undo | null; setUndo: Dispatch<SetStateAction<Undo | null>> }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  // Where focus was before it came into the message, to go back to when the message closes.
+  const backRef = useRef<HTMLElement | null>(null);
+  // A new key for each message, so screen readers read it even when the words are the same as last time.
+  const [said, setSaid] = useState({ undo, n: 0 });
+
+  if (said.undo !== undo) setSaid({ undo, n: said.n + 1 });
+
+  useEffect(() => {
+    const box = boxRef.current;
+
+    if (!undo || !box) return undefined;
+    let timer = 0;
+    const stop = () => window.clearTimeout(timer);
+    const start = () => {
+      stop();
+      if (!box.matches(':hover') && !box.contains(document.activeElement)) timer = window.setTimeout(() => setUndo(null), 8000);
+    };
+    const focusIn = (e: FocusEvent) => {
+      if (e.relatedTarget instanceof HTMLElement && !box.contains(e.relatedTarget)) backRef.current = e.relatedTarget;
+      stop();
+    };
+    const focusOut = (e: FocusEvent) => {
+      if (!(e.relatedTarget instanceof Node && box.contains(e.relatedTarget))) start();
+    };
+
+    box.addEventListener('pointerenter', stop);
+    box.addEventListener('pointerleave', start);
+    box.addEventListener('focusin', focusIn);
+    box.addEventListener('focusout', focusOut);
+    start();
+    return () => {
+      stop();
+      box.removeEventListener('pointerenter', stop);
+      box.removeEventListener('pointerleave', start);
+      box.removeEventListener('focusin', focusIn);
+      box.removeEventListener('focusout', focusOut);
+    };
+  }, [undo, setUndo]);
+
+  const close = (restore?: () => void) => {
+    const back = backRef.current;
+
+    backRef.current = null;
+    if (back?.isConnected) back.focus();
+    restore?.();
+    setUndo(null);
+  };
+
+  return (
+    <>
+      <div role='status' className='sr-only'>
+        {undo && <span key={said.n}>{undo.label}</span>}
+      </div>
+      {undo && (
+        <div
+          ref={boxRef}
+          className='fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-[10px] bg-[#1f2329] px-4 py-2 text-sm text-white shadow-lg'
+        >
+          <span className='min-w-0'>{undo.label}</span>
+          <button type='button' className='font-semibold text-[#8ccaff] hover:underline' onClick={() => close(undo.restore)}>
+            Undo
+          </button>
+          <button type='button' aria-label='Dismiss' className='opacity-70 hover:opacity-100' onClick={() => close()}>
+            ×
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function Editor({
   workspaceId,
   courseId,
@@ -1148,8 +1264,9 @@ function Editor({
     initial.draft.lessons[0] ? { kind: 'lesson', id: initial.draft.lessons[0].id } : { kind: 'settings' }
   );
   const [modal, setModal] = useState<EditorModal>(null);
-  const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
+  const [undo, setUndo] = useState<Undo | null>(null);
   const [focusId, setFocusId] = useState('');
+  const refocus = useRefocus();
   // drafts: review link + comments (header buttons, open-comment counts under blocks, their windows).
   const review = useStudioReview(workspaceId, courseId, draft, (lessonId, blockId) => {
     setSelected({ kind: 'lesson', id: lessonId });
@@ -1157,6 +1274,8 @@ function Editor({
   });
   const [keeping, setKeeping] = useState(false);
   const uploadTarget = useMemo(() => ({ workspaceId, courseId }), [workspaceId, courseId]);
+
+  usePageTitle(learningTitle(draft.title.trim() || 'Untitled course', 'Studio'));
   const templates = useBlockTemplates(workspaceId);
   const lessonDrag = useDragSort((from, to) =>
     update((c) => {
@@ -1308,19 +1427,15 @@ function Editor({
   });
 
   useEffect(() => {
-    if (!undo) return undefined;
-    const t = window.setTimeout(() => setUndo(null), 8000);
-
-    return () => window.clearTimeout(t);
-  }, [undo]);
-
-  useEffect(() => {
     if (!focusId) return;
     const el = document.getElementById(focusId);
 
     if (el) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.querySelector<HTMLElement>('textarea, input:not([type="checkbox"]):not([type="radio"]), select')?.focus({ preventScroll: true });
+      const field = el.querySelector<HTMLElement>('textarea, input:not([type="checkbox"]):not([type="radio"]), select');
+
+      // Blocks without fields (e.g. a divider): their first button.
+      (field || firstControl(el))?.focus({ preventScroll: true });
     }
 
     setFocusId('');
@@ -1428,13 +1543,15 @@ function Editor({
     setFocusId('chs-lesson-title');
   };
 
-  const moveLesson = (id: string, delta: number) =>
+  const moveLesson = (id: string, delta: number) => {
+    refocus.moved(id, delta);
     update((c) => {
       const i = c.lessons.findIndex((l) => l.id === id);
       const moved = i < 0 ? c.lessons : moveItem(c.lessons, i, i + delta);
 
       return moved === c.lessons ? c : { ...c, lessons: moved };
     });
+  };
 
   const duplicateLesson = (id: string) => {
     const src = draftRef.current.lessons.find((l) => l.id === id);
@@ -1457,6 +1574,8 @@ function Editor({
     update((c) => ({ ...c, lessons: dropThensTo(c.lessons.filter((l) => l.id !== id), id) }));
     setSelected(neighbor ? { kind: 'lesson', id: neighbor.id } : { kind: 'settings' });
     setModal(null);
+    if (neighbor) setFocusId('chs-lesson-title');
+    else refocus.later('add-lesson');
   };
 
   const addBlock = (lessonId: string, index: number, type: BlockType) => {
@@ -1491,8 +1610,11 @@ function Editor({
 
     if (index < 0) return;
     const block = blocks[index];
+    const near = blocks[index + 1] || blocks[index - 1];
 
     setBlocks(lessonId, (bs) => bs.filter((b) => b.id !== blockId));
+    if (near) setFocusId(`chs-b-${near.id}`);
+    else refocus.later('add-block');
     setUndo({
       label: 'Block deleted.',
       restore: () => {
@@ -1509,8 +1631,11 @@ function Editor({
 
     if (index < 0) return;
     const question = qs[index];
+    const near = qs[index + 1] || qs[index - 1];
 
     setQuestions((list) => list.filter((q) => q.id !== questionId));
+    if (near) setFocusId(`chs-q-${near.id}`);
+    else refocus.later(`add-question:${QUESTION_BUTTONS[0].value}`);
     setUndo({
       label: 'Question deleted.',
       restore: () => {
@@ -1518,6 +1643,15 @@ function Editor({
         setSelected({ kind: 'quiz' });
         setFocusId(`chs-q-${question.id}`);
       },
+    });
+  };
+
+  const moveQuestion = (id: string, delta: number) => {
+    refocus.moved(id, delta);
+    setQuestions((qs) => {
+      const i = qs.findIndex((q) => q.id === id);
+
+      return i < 0 ? qs : moveItem(qs, i, i + delta);
     });
   };
 
@@ -1616,7 +1750,12 @@ function Editor({
             <div className='rounded-[12px] border border-dashed border-border-primary px-4 py-8 text-center text-sm text-text-secondary'>
               <div>This lesson is empty. Add text, pictures, videos, quick checks and more.</div>
               <div className='mt-3'>
-                <Button type='button' size='sm' onClick={() => setModal({ kind: 'library', lessonId: lesson.id, index: 0 })}>
+                <Button
+                  ref={refocus.reg('add-block')}
+                  type='button'
+                  size='sm'
+                  onClick={() => setModal({ kind: 'library', lessonId: lesson.id, index: 0 })}
+                >
                   + Add a block
                 </Button>
                 <Button type='button' size='sm' variant='outline' className='ml-2' onClick={() => setModal({ kind: 'paste', lessonId: lesson.id })}>
@@ -1720,10 +1859,15 @@ function Editor({
                 <div key={q.id} id={`chs-q-${q.id}`} className='scroll-mt-4 rounded-[12px] border border-border-primary' data-testid='carehub-learning-quiz-question'>
                   <div className='flex items-center gap-0.5 border-b border-border-primary py-1 pl-3 pr-1'>
                     <span className='min-w-0 flex-1 truncate text-xs font-semibold text-text-secondary'>Question {i + 1}</span>
-                    <IconButton label='Move up' disabled={i === 0} onClick={() => setQuestions((qs) => moveItem(qs, i, i - 1))}>
+                    <IconButton buttonRef={refocus.reg(`up:${q.id}`)} label='Move up' disabled={i === 0} onClick={() => moveQuestion(q.id, -1)}>
                       ↑
                     </IconButton>
-                    <IconButton label='Move down' disabled={i >= quiz.questions.length - 1} onClick={() => setQuestions((qs) => moveItem(qs, i, i + 1))}>
+                    <IconButton
+                      buttonRef={refocus.reg(`down:${q.id}`)}
+                      label='Move down'
+                      disabled={i >= quiz.questions.length - 1}
+                      onClick={() => moveQuestion(q.id, 1)}
+                    >
                       ↓
                     </IconButton>
                     <IconButton
@@ -1749,7 +1893,7 @@ function Editor({
               <div className='flex flex-wrap items-center gap-1'>
                 <span className='mr-1 text-xs text-text-tertiary'>Add a question:</span>
                 {QUESTION_BUTTONS.map((b) => (
-                  <AddButton key={b.value} onClick={() => addQuestion(b.value)}>
+                  <AddButton key={b.value} buttonRef={refocus.reg(`add-question:${b.value}`)} onClick={() => addQuestion(b.value)}>
                     {b.label}
                   </AddButton>
                 ))}
@@ -1988,11 +2132,21 @@ function Editor({
                 {isSide(l) && <SideLessonNote />}
               </span>
             </button>
-            <span className='flex shrink-0 opacity-50 group-focus-within:opacity-100 group-hover:opacity-100'>
-              <IconButton label={`Move ${lessonName(l, i)} up`} disabled={i === 0} onClick={() => moveLesson(l.id, -1)}>
+            <span className='flex shrink-0'>
+              <IconButton
+                buttonRef={refocus.reg(`up:${l.id}`)}
+                label={`Move ${lessonName(l, i)} up`}
+                disabled={i === 0}
+                onClick={() => moveLesson(l.id, -1)}
+              >
                 ↑
               </IconButton>
-              <IconButton label={`Move ${lessonName(l, i)} down`} disabled={i >= lessons.length - 1} onClick={() => moveLesson(l.id, 1)}>
+              <IconButton
+                buttonRef={refocus.reg(`down:${l.id}`)}
+                label={`Move ${lessonName(l, i)} down`}
+                disabled={i >= lessons.length - 1}
+                onClick={() => moveLesson(l.id, 1)}
+              >
                 ↓
               </IconButton>
             </span>
@@ -2001,7 +2155,9 @@ function Editor({
       })}
       {!lessons.length && <div className='px-2 py-1 text-xs text-text-tertiary'>No lessons yet.</div>}
       <div className='px-1 pt-1'>
-        <AddButton onClick={addLesson}>Add a lesson</AddButton>
+        <AddButton buttonRef={refocus.reg('add-lesson')} onClick={addLesson}>
+          Add a lesson
+        </AddButton>
       </div>
       <div className='mt-2 border-t border-border-primary pt-2'>
         {outlineItem(
@@ -2031,7 +2187,7 @@ function Editor({
           setSelected(v === 'settings' || v === 'quiz' ? { kind: v } : { kind: 'lesson', id: v.slice('lesson:'.length) })
         }
       />
-      <Button type='button' size='sm' variant='outline' onClick={addLesson}>
+      <Button ref={refocus.reg('add-lesson')} type='button' size='sm' variant='outline' onClick={addLesson}>
         + Lesson
       </Button>
     </div>
@@ -2113,27 +2269,7 @@ function Editor({
           <div className='min-w-0'>{panel}</div>
         </div>
 
-        {undo && (
-          <div
-            role='status'
-            className='fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-[10px] bg-[#1f2329] px-4 py-2 text-sm text-white shadow-lg'
-          >
-            <span className='min-w-0'>{undo.label}</span>
-            <button
-              type='button'
-              className='font-semibold text-[#8ccaff] hover:underline'
-              onClick={() => {
-                undo.restore();
-                setUndo(null);
-              }}
-            >
-              Undo
-            </button>
-            <button type='button' aria-label='Dismiss' className='opacity-70 hover:opacity-100' onClick={() => setUndo(null)}>
-              ×
-            </button>
-          </div>
-        )}
+        <UndoToast undo={undo} setUndo={setUndo} />
 
         {review.modal}
         {modal?.kind === 'library' && (

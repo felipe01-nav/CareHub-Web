@@ -422,8 +422,10 @@ function LearningRoutes() {
   const inPlayer = /^\/(course|review)\//.test(rest);
   const inReports = /^\/reports(\/|$)/.test(rest);
   const inAssign = /^\/assign(\/|$)/.test(rest);
+  // The player, the Studio editor and the Question banks pages name the tab themselves.
+  const ownTitle = /^\/course\//.test(rest) || (canBuild && (inEditor || (inStudio && new URLSearchParams(location.search).get('view') === 'banks')));
 
-  usePageTitle(/^\/course\//.test(rest) ? null : learningTitle(SCREEN_TITLES.find(([re]) => re.test(rest))?.[1] || ''));
+  usePageTitle(ownTitle ? null : learningTitle(SCREEN_TITLES.find(([re]) => re.test(rest))?.[1] || ''));
 
   if (me?.is_guest) {
     return (
