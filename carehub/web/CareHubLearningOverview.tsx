@@ -18,9 +18,10 @@ const TEAMS_REPORT = `${REPORTS_HOME}/teams`;
 const courseReport = (id: string) => `${REPORTS_HOME}/course/${id}`;
 
 const DAY_MS = 86400000;
-/** Chart colours (also used by the legend). */
+/** Chart colours (also used by the legend). Dark amber dots (5:1 on white), ringed in the page colour so they show on a bar too. */
 const BAR = 'var(--fill-theme-thick, #6366f1)';
-const DOT = '#f59e0b';
+const DOT = '#b45309';
+const DOT_RING = 'var(--background-primary, #fff)';
 
 // ---------------------------------------------------------------------------
 // Data
@@ -431,7 +432,7 @@ function ActivityChart({ o }: { o: LearningOverview }) {
                   {d.active > 0 && (
                     <rect x={cx - barW / 2} y={y(d.active)} width={barW} height={base - y(d.active)} rx={Math.min(3, barW / 2)} fill={BAR} />
                   )}
-                  {d.finished > 0 && <circle cx={cx} cy={y(d.finished)} r={dotR} fill={DOT} />}
+                  {d.finished > 0 && <circle cx={cx} cy={y(d.finished)} r={dotR} fill={DOT} stroke={DOT_RING} strokeWidth={1.5} />}
                 </g>
               );
             })}
