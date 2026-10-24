@@ -1165,49 +1165,16 @@ export function LearningStudioEditor({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * "Block deleted. Undo" at the bottom of the editor. It goes after 8 seconds, but not while the pointer or keyboard
- * focus is on it (WCAG 2.2.1), and a status region that is always on the page reads it out (4.1.3).
+ * "Block deleted. Undo" at the bottom of the editor, until the Editor takes it away (see offerUndo). A status region
+ * that is always on the page reads it out (WCAG 4.1.3); Undo and × put focus back where it was before.
  */
 function UndoToast({ undo, setUndo }: { undo: Undo | null; setUndo: Dispatch<SetStateAction<Undo | null>> }) {
-  const boxRef = useRef<HTMLDivElement | null>(null);
   // Where focus was before it came into the message, to go back to when the message closes.
   const backRef = useRef<HTMLElement | null>(null);
   // A new key for each message, so screen readers read it even when the words are the same as last time.
   const [said, setSaid] = useState({ undo, n: 0 });
 
   if (said.undo !== undo) setSaid({ undo, n: said.n + 1 });
-
-  useEffect(() => {
-    const box = boxRef.current;
-
-    if (!undo || !box) return undefined;
-    let timer = 0;
-    const stop = () => window.clearTimeout(timer);
-    const start = () => {
-      stop();
-      if (!box.matches(':hover') && !box.contains(document.activeElement)) timer = window.setTimeout(() => setUndo(null), 8000);
-    };
-    const focusIn = (e: FocusEvent) => {
-      if (e.relatedTarget instanceof HTMLElement && !box.contains(e.relatedTarget)) backRef.current = e.relatedTarget;
-      stop();
-    };
-    const focusOut = (e: FocusEvent) => {
-      if (!(e.relatedTarget instanceof Node && box.contains(e.relatedTarget))) start();
-    };
-
-    box.addEventListener('pointerenter', stop);
-    box.addEventListener('pointerleave', start);
-    box.addEventListener('focusin', focusIn);
-    box.addEventListener('focusout', focusOut);
-    start();
-    return () => {
-      stop();
-      box.removeEventListener('pointerenter', stop);
-      box.removeEventListener('pointerleave', start);
-      box.removeEventListener('focusin', focusIn);
-      box.removeEventListener('focusout', focusOut);
-    };
-  }, [undo, setUndo]);
 
   const close = (restore?: () => void) => {
     const back = backRef.current;
@@ -1225,8 +1192,10 @@ function UndoToast({ undo, setUndo }: { undo: Undo | null; setUndo: Dispatch<Set
       </div>
       {undo && (
         <div
-          ref={boxRef}
           className='fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-[10px] bg-[#1f2329] px-4 py-2 text-sm text-white shadow-lg'
+          onFocus={(e) => {
+            if (e.relatedTarget instanceof HTMLElement && !e.currentTarget.contains(e.relatedTarget)) backRef.current = e.relatedTarget;
+          }}
         >
           <span className='min-w-0'>{undo.label}</span>
           <button type='button' className='font-semibold text-[#8ccaff] hover:underline' onClick={() => close(undo.restore)}>
@@ -1265,6 +1234,9 @@ function Editor({
   );
   const [modal, setModal] = useState<EditorModal>(null);
   const [undo, setUndo] = useState<Undo | null>(null);
+  // The Undo message stays until the course changes again (Paste does the same for its own), so a late Undo can't
+  // throw away later work, e.g. what was typed into blocks it would remove.
+  const offered = useRef<{ undo: Undo | null; after: Content | null }>({ undo: null, after: null });
   const [focusId, setFocusId] = useState('');
   const refocus = useRefocus();
   // drafts: review link + comments (header buttons, open-comment counts under blocks, their windows).
@@ -1393,6 +1365,22 @@ function Editor({
     setSave('pending');
     schedule(1500);
   };
+
+  /** Call straight after the change it undoes: the message goes with the next change, a newer message, Undo or ×. */
+  const offerUndo = (u: Undo) => {
+    offered.current = { undo: u, after: draftRef.current };
+    setUndo(u);
+  };
+
+  useEffect(() => {
+    const o = offered.current;
+
+    if (!o.undo || draft === o.after) return;
+    const u = o.undo;
+
+    offered.current = { undo: null, after: null };
+    setUndo((cur) => (cur === u ? null : cur));
+  }, [draft]);
 
   // Warn before closing the tab with unsaved changes; save on the way out of the editor.
   useEffect(() => {
@@ -1594,7 +1582,7 @@ function Editor({
     setBlocks(lessonId, (bs) => [...bs.slice(0, index), ...list, ...bs.slice(index)]);
     setModal(null);
     setFocusId(`chs-b-${list[0].id}`);
-    setUndo({
+    offerUndo({
       label,
       restore: () => {
         setBlocks(lessonId, (bs) => bs.filter((b) => !ids.has(b.id)));
@@ -1615,7 +1603,7 @@ function Editor({
     setBlocks(lessonId, (bs) => bs.filter((b) => b.id !== blockId));
     if (near) setFocusId(`chs-b-${near.id}`);
     else refocus.later('add-block');
-    setUndo({
+    offerUndo({
       label: 'Block deleted.',
       restore: () => {
         setBlocks(lessonId, (bs) => (bs.some((b) => b.id === block.id) ? bs : insertAt(bs, index, block)));
@@ -1636,7 +1624,7 @@ function Editor({
     setQuestions((list) => list.filter((q) => q.id !== questionId));
     if (near) setFocusId(`chs-q-${near.id}`);
     else refocus.later(`add-question:${QUESTION_BUTTONS[0].value}`);
-    setUndo({
+    offerUndo({
       label: 'Question deleted.',
       restore: () => {
         setQuestions((list) => (list.some((q) => q.id === question.id) ? list : insertAt(list, index, question)));

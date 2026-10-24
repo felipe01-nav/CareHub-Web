@@ -1199,14 +1199,15 @@ function ListItemsEditor({ items, onChange }: { items: string[]; onChange: (item
   return (
     <div className='flex flex-col gap-1.5'>
       {items.map((it, i) => (
-        <div key={i} className='flex items-center gap-1'>
+        <div key={i} ref={refocus.reg(`row:${i}`)} className='flex items-center gap-1'>
           <TextLine value={it} onChange={(v) => onChange(items.map((x, j) => (j === i ? v : x)))} placeholder={`Item ${i + 1}`} ariaLabel={`Item ${i + 1}`} />
           <IconButton
             buttonRef={refocus.reg(`up:${i}`)}
             label='Move up'
             disabled={i === 0}
             onClick={() => {
-              refocus.later(`up:${i - 1}`, `rm:${i - 1}`);
+              // In the top place there's no ↑ any more: go to the item's text, never to Remove.
+              refocus.later(`up:${i - 1}`, `row:${i - 1}`);
               onChange(move(items, i, i - 1));
             }}
           >
