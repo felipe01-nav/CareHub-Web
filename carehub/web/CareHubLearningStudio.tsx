@@ -34,6 +34,7 @@ import {
 } from './CareHubLearningApi';
 import { Chip, CourseCover } from './CareHubLearningBlocks';
 import { LinkCourseContext } from './CareHubLearningBlocks3';
+import { useStudioReview, WithCommentCount } from './CareHubLearningDrafts';
 import { EXAMPLES } from './CareHubLearningExample';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { PasteTextDialog } from './CareHubLearningPaste';
@@ -1069,6 +1070,11 @@ function Editor({
   const [modal, setModal] = useState<EditorModal>(null);
   const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
   const [focusId, setFocusId] = useState('');
+  // drafts: review link + comments (header buttons, open-comment counts under blocks, their windows).
+  const review = useStudioReview(workspaceId, courseId, draft, (lessonId, blockId) => {
+    setSelected({ kind: 'lesson', id: lessonId });
+    setFocusId(`chs-b-${blockId}`);
+  });
   const [keeping, setKeeping] = useState(false);
   const uploadTarget = useMemo(() => ({ workspaceId, courseId }), [workspaceId, courseId]);
   const lessonDrag = useDragSort((from, to) =>
@@ -1514,7 +1520,9 @@ function Editor({
             </div>
           ) : (
             lesson.blocks.map((b, i) => (
-              <BlockCard
+              <WithCommentCount
+                card={BlockCard}
+                openComments={review.badge(b.id)}
                 key={b.id}
                 block={b}
                 index={i}
@@ -1920,6 +1928,7 @@ function Editor({
               <Button type='button' size='sm' variant='outline' onClick={() => openPreview()} data-testid='carehub-learning-preview-button'>
                 👁 Preview
               </Button>
+              {review.buttons}
               <Button type='button' size='sm' variant='outline' onClick={() => setModal({ kind: 'versions' })}>
                 {meta.versions.length ? `Versions (${meta.versions.length})` : 'Versions'}
               </Button>
@@ -1994,6 +2003,7 @@ function Editor({
           </div>
         )}
 
+        {review.modal}
         {modal?.kind === 'library' && (
           <BlockLibrary onPick={(t) => addBlock(modal.lessonId, modal.index, t)} onClose={() => setModal(null)} />
         )}

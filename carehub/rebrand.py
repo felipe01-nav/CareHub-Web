@@ -1358,6 +1358,7 @@ EDITS.setdefault("src/components/app/header/AppHeader.tsx", []).extend([
 for _name in ["CareHubLearningAssignApi.ts", "CareHubLearningAssign.tsx", "CareHubLearningCertificate.tsx"]:
     EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
 EXTRA_FILES[HERE / "web" / "CareHubLearningOverview.tsx"] = "src/components/carehub/CareHubLearningOverview.tsx"  # Reports → Overview tab
+EXTRA_FILES[HERE / "web" / "CareHubLearningDrafts.tsx"] = "src/components/carehub/CareHubLearningDrafts.tsx"  # review links + draft comments
 
 if __name__ == "__main__":
     sys.exit(main())
