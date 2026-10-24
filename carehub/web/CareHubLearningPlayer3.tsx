@@ -637,6 +637,15 @@ function knownSearchParts(block: Block): SearchPart[] | null {
       ];
     case 'labeled_graphic':
       return [{ text: txt(rec(b.image).alt) }, ...items('markers', ['title', 'text'])];
+    case 'survey':
+      // The survey's title, questions and choices (never anyone's answers).
+      return [
+        ...one(b.title),
+        ...arr(b.questions).flatMap((q) => [
+          { text: txt(rec(q).prompt) },
+          ...arr(rec(q).options).map((o) => ({ text: txt(rec(o).text) })),
+        ]),
+      ];
     case 'divider':
     case 'continue':
     case 'embed':

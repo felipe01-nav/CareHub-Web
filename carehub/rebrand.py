@@ -1367,6 +1367,7 @@ EXTRA_FILES[HERE / "web" / "CareHubLearningBranching.tsx"] = "src/components/car
 EXTRA_FILES[HERE / "web" / "CareHubLearningBlocks4.tsx"] = "src/components/carehub/CareHubLearningBlocks4.tsx"  # two columns, code, quote carousel, divider / quote / image looks
 EXTRA_FILES[HERE / "web" / "CareHubLearningPaths.tsx"] = "src/components/carehub/CareHubLearningPaths.tsx"  # learning paths (paths3)
 EXTRA_FILES[HERE / "web" / "CareHubLearningA11y.tsx"] = "src/components/carehub/CareHubLearningA11y.tsx"  # keyboard + screen reader helpers
+EXTRA_FILES[HERE / "web" / "CareHubLearningLook.tsx"] = "src/components/carehub/CareHubLearningLook.tsx"  # text size, lesson list, words, layouts, icons, topics
 
 if __name__ == "__main__":
     sys.exit(main())

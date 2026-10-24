@@ -36,6 +36,31 @@ function tabStops(box: HTMLElement) {
   });
 }
 
+// Safari doesn't focus a button when it's clicked, so a dialog opened from one finds focus on the page body and
+// can't give it back on close. The last button pressed (noted on pointerdown, before its click opens anything) stands
+// in for it then — only when nothing else has focus.
+let lastPressed: { el: Element; at: number } | null = null;
+
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      const el = e.target instanceof Element ? e.target.closest('button, [role="button"], a[href], summary') : null;
+
+      lastPressed = el ? { el, at: Date.now() } : null;
+    },
+    { capture: true, passive: true }
+  );
+}
+
+function openerNow(): Element | null {
+  const now = document.activeElement;
+  const pressed = lastPressed;
+
+  if (now && now !== document.body) return now;
+  return pressed && pressed.el.isConnected && Date.now() - pressed.at < 10_000 ? pressed.el : now;
+}
+
 export function CareHubModal({
   children,
   onClose,
@@ -54,7 +79,7 @@ export function CareHubModal({
   const boxRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   // Where focus was when the dialog opened (read while rendering, before anything inside takes focus).
-  const [opener] = useState(() => document.activeElement);
+  const [opener] = useState(openerNow);
   const back = useRef(opener);
 
   useEffect(() => {
