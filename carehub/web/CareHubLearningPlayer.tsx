@@ -36,6 +36,7 @@ import {
   writeQueue,
 } from './CareHubLearningApi';
 import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
+import { JumpArea } from './CareHubLearningBlocks3';
 import { isInteractKind } from './CareHubLearningInteract';
 import { ChNote } from './CareHubUi';
 
@@ -473,7 +474,10 @@ function LessonView({
     gate && gate.require_complete
       ? lesson.blocks
           .slice(0, gateIndex)
-          .filter((b) => (b.type === 'knowledge_check' && !ctx.kc[b.id]) || (b.type === 'scenario' && !ctx.done.has(b.id)))
+          .filter(
+            (b) =>
+              (b.type === 'knowledge_check' && !ctx.kc[b.id]) || ((b.type === 'scenario' || b.type === 'sorting') && !ctx.done.has(b.id))
+          )
       : [];
 
   return (
@@ -496,13 +500,15 @@ function LessonView({
         {!lesson.blocks.length && <div className='text-sm text-text-tertiary'>This lesson is empty.</div>}
       </div>
       {gate ? (
-        <div className='mt-6 flex flex-col items-start gap-1.5'>
+        <div id={`chl-gate-${gate.id}`} className='mt-6 flex flex-col items-start gap-1.5'>
           <Button type='button' size='lg' disabled={waitingOn.length > 0} onClick={() => onGate(gate)}>
             {gate.label.trim() || 'Continue'} ↓
           </Button>
           {waitingOn.length > 0 && (
             <div className='text-xs text-text-tertiary'>
-              {waitingOn.some((b) => b.type === 'scenario') ? 'Finish the practice above to continue.' : 'Answer the question above to continue.'}
+              {waitingOn.some((b) => b.type === 'scenario' || b.type === 'sorting')
+                ? 'Finish the practice above to continue.'
+                : 'Answer the question above to continue.'}
             </div>
           )}
         </div>
@@ -1617,7 +1623,7 @@ function PlayerShell({
     );
   };
 
-  return (
+  const page = (
     <NarrowContext.Provider value={narrow}>
       <div ref={rootRef} className='w-full min-w-0' data-testid='carehub-learning-player'>
         <div ref={topRef} className='scroll-mt-4' />
@@ -1733,6 +1739,19 @@ function PlayerShell({
         )}
       </div>
     </NarrowContext.Provider>
+  );
+
+  return (
+    <JumpArea
+      lessons={lessons}
+      current={view.kind === 'lesson' ? view.lessonId : ''}
+      preview={isPreview}
+      isLocked={isLocked}
+      isDone={(id) => doneIds.has(id)}
+      open={(lessonId) => openView({ kind: 'lesson', lessonId })}
+    >
+      {page}
+    </JumpArea>
   );
 }
 

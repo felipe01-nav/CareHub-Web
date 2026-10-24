@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { chErrorText } from './CareHubCore';
 import { clampInt, EMBED_SITES, embedKind, newId, setQuestionKind, urlAllowed } from './CareHubLearningApi';
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
+import { BLOCKS3_INFO, Blocks3Editor, LessonLinkWrap, LinkBlockContext } from './CareHubLearningBlocks3';
 import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
@@ -30,6 +31,7 @@ import type {
   TextItem,
   Tone,
 } from './CareHubLearningApi';
+import type { Blocks3StudioKit } from './CareHubLearningBlocks3';
 import type { PictureField } from './CareHubLearningInteract';
 
 // ---------------------------------------------------------------------------
@@ -57,14 +59,18 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
   knowledge_check: { emoji: '✅', label: 'Knowledge check', hint: 'A practice question with instant feedback' },
   scenario: { emoji: '💬', label: 'Scenario', hint: 'A branching conversation to practice' },
   labeled_graphic: LABELED_GRAPHIC_INFO,
+  ...BLOCKS3_INFO,
   page_link: { emoji: '🔗', label: 'Care Hub page', hint: 'A link to a page in this workspace' },
 };
 
 export const BLOCK_GROUPS: { title: string; types: BlockType[] }[] = [
-  { title: 'Text', types: ['heading', 'paragraph', 'statement', 'quote', 'callout', 'list', 'divider'] },
-  { title: 'Media', types: ['image', 'video', 'audio', 'file', 'embed'] },
-  { title: 'Interactive', types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'labeled_graphic', 'continue'] },
-  { title: 'Links', types: ['page_link'] },
+  { title: 'Text', types: ['heading', 'paragraph', 'statement', 'quote', 'callout', 'list', 'table', 'timeline', 'divider'] },
+  { title: 'Media', types: ['image', 'gallery', 'video', 'audio', 'file', 'embed'] },
+  {
+    title: 'Interactive',
+    types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'labeled_graphic', 'sorting', 'continue'],
+  },
+  { title: 'Links', types: ['page_link', 'buttons'] },
 ];
 
 export function BlockLibrary({ onPick, onClose }: { onPick: (type: BlockType) => void; onClose: () => void }) {
@@ -168,16 +174,21 @@ export function TextBox({
   rows?: number;
   maxLength?: number;
 }) {
+  const box = useRef<HTMLTextAreaElement>(null);
+
   return (
-    <textarea
-      value={value}
-      rows={rows}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      maxLength={maxLength}
-      className={cn(chInputClass, 'w-full min-w-0 resize-y leading-relaxed')}
-      onChange={(e) => onChange(e.target.value)}
-    />
+    <LessonLinkWrap box={box} value={value} onChange={onChange} info={BLOCK_INFO}>
+      <textarea
+        ref={box}
+        value={value}
+        rows={rows}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        maxLength={maxLength}
+        className={cn(chInputClass, 'w-full min-w-0 resize-y leading-relaxed')}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </LessonLinkWrap>
   );
 }
 
@@ -1336,6 +1347,33 @@ function ImageEditor({ block, onChange }: { block: BlockOf<'image'>; onChange: (
   );
 }
 
+/** What the sorting, timeline, gallery, table and buttons editors borrow from this file (CareHubLearningBlocks3). */
+const BLOCKS3_STUDIO: Blocks3StudioKit = {
+  picture: (o) => (
+    <MediaField
+      kind='image'
+      label={o.label}
+      value={o.value}
+      onChange={o.onChange}
+      onUpload={o.onUpload}
+      hint='Upload a picture (up to 10 MB) or paste a link.'
+    />
+  ),
+  file: (o) => (
+    <MediaField
+      kind='file'
+      label={o.label}
+      value={o.value}
+      uploadedName={o.name}
+      onChange={o.onChange}
+      onUpload={(url, file) => o.onUpload(url, file.name)}
+      hint='Upload a file (up to 25 MB) or paste a link.'
+    />
+  ),
+  info: BLOCK_INFO,
+  urlOk: urlAllowed,
+};
+
 export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
   switch (block.type) {
     case 'heading':
@@ -1521,6 +1559,12 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
       return <ScenarioEditor block={block} onChange={onChange} />;
     case 'labeled_graphic':
       return <LabeledGraphicEditor block={block} onChange={onChange} pictureField={pictureField} useSrc={useFileSrc} />;
+    case 'sorting':
+    case 'timeline':
+    case 'gallery':
+    case 'table':
+    case 'buttons':
+      return <Blocks3Editor block={block} onChange={onChange} kit={BLOCKS3_STUDIO} />;
     case 'page_link':
       return <PageLinkEditor block={block} onChange={onChange} />;
     default:
@@ -1588,7 +1632,9 @@ export function BlockCard({
         </IconButton>
       </div>
       <div className='p-3'>
-        <BlockEditor block={block} onChange={onChange} />
+        <LinkBlockContext.Provider value={block.id}>
+          <BlockEditor block={block} onChange={onChange} />
+        </LinkBlockContext.Provider>
       </div>
     </div>
   );

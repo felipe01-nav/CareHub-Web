@@ -4,6 +4,14 @@ import { getTokenParsed } from '@/application/session/token';
 
 import { chCall, chErrorText, CH_API } from './CareHubCore';
 import {
+  blankBlocks3,
+  blocks3LinkProblems,
+  blocks3Problems,
+  blocks3Seconds,
+  cloneBlocks3,
+  normalizeBlocks3,
+} from './CareHubLearningBlocks3';
+import {
   blankLabeledGraphic,
   gradeInteract,
   INTERACT_KINDS,
@@ -20,6 +28,7 @@ import {
   withoutInteractFields,
 } from './CareHubLearningInteract';
 
+import type { Blocks3Block } from './CareHubLearningBlocks3';
 import type { InteractKind, InteractQuestionFields, LabeledGraphicBlock } from './CareHubLearningInteract';
 
 export const LEARNING_PATH = '/app/learning';
@@ -124,7 +133,8 @@ export type Block =
   | { id: string; type: 'knowledge_check'; question: Question }
   | { id: string; type: 'scenario'; title: string; intro: string; start: string; steps: ScenarioStep[] }
   | { id: string; type: 'page_link'; view_id: string; title: string }
-  | LabeledGraphicBlock;
+  | LabeledGraphicBlock
+  | Blocks3Block;
 
 export type BlockType = Block['type'];
 export type BlockOf<T extends BlockType> = Extract<Block, { type: T }>;
@@ -151,6 +161,11 @@ export const BLOCK_TYPES: BlockType[] = [
   'scenario',
   'labeled_graphic',
   'page_link',
+  'sorting',
+  'timeline',
+  'gallery',
+  'table',
+  'buttons',
 ];
 
 export interface CourseSettings {
@@ -593,6 +608,12 @@ export function normalizeBlock(raw: unknown): Block | null {
       };
     case 'labeled_graphic':
       return normalizeLabeledGraphic(o, id);
+    case 'sorting':
+    case 'timeline':
+    case 'gallery':
+    case 'table':
+    case 'buttons':
+      return normalizeBlocks3(o, id);
     case 'page_link':
       return { id, type: 'page_link', view_id: str(o.view_id), title: str(o.title) };
     default:
@@ -880,6 +901,12 @@ export function cloneBlock(b: Block): Block {
     case 'labeled_graphic':
       copy.markers = copy.markers.map((m) => ({ ...m, id: newId('m') }));
       break;
+    case 'sorting':
+    case 'timeline':
+    case 'gallery':
+    case 'table':
+    case 'buttons':
+      return cloneBlocks3(copy);
     case 'scenario': {
       const map = new Map<string, string>();
 
@@ -1261,6 +1288,12 @@ export function blankBlock(type: BlockType): Block {
 
     case 'labeled_graphic':
       return blankLabeledGraphic(id);
+    case 'sorting':
+    case 'timeline':
+    case 'gallery':
+    case 'table':
+    case 'buttons':
+      return blankBlocks3(type, id);
     case 'page_link':
     default:
       return { id, type: 'page_link', view_id: '', title: '' };
@@ -1372,6 +1405,13 @@ export function estimateMinutes(c: Content) {
           break;
         case 'labeled_graphic':
           lesson += labeledGraphicSeconds(b);
+          break;
+        case 'sorting':
+        case 'timeline':
+        case 'gallery':
+        case 'table':
+        case 'buttons':
+          lesson += blocks3Seconds(b);
           break;
         case 'knowledge_check':
           lesson += 30;
@@ -1545,6 +1585,7 @@ export function validateContent(c: Content): string[] {
 
       if (b.type === 'knowledge_check') questionProblems(b.question, `A knowledge check in ${name}`, out);
       if (b.type === 'labeled_graphic') labeledGraphicProblems(b, name, out);
+      blocks3Problems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out, urlAllowed);
       if (b.type === 'scenario') {
         if (!b.steps.length) out.push(`A scenario in ${name} needs at least one step.`);
         else if (!b.steps.some((s) => s.id === b.start)) out.push(`A scenario in ${name} needs a first step.`);
@@ -1567,6 +1608,7 @@ export function validateContent(c: Content): string[] {
     });
   }
 
+  blocks3LinkProblems(c, out, serverLessonName);
   if (repeated) out.push('Two parts of this course share the same id. Delete the copy and add it again.');
   return Array.from(new Set(out));
 }

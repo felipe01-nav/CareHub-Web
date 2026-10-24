@@ -33,6 +33,7 @@ import {
   validateContent,
 } from './CareHubLearningApi';
 import { Chip, CourseCover } from './CareHubLearningBlocks';
+import { LinkCourseContext } from './CareHubLearningBlocks3';
 import { EXAMPLES } from './CareHubLearningExample';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { PasteTextDialog } from './CareHubLearningPaste';
@@ -1776,7 +1777,13 @@ function Editor({
 
   const lessonIndex = selected.kind === 'lesson' ? lessons.findIndex((l) => l.id === selected.id) : -1;
   const panel =
-    selected.kind === 'quiz' ? renderQuiz() : lessonIndex >= 0 ? renderLesson(lessons[lessonIndex], lessonIndex) : renderSettings();
+    selected.kind === 'quiz' ? (
+      renderQuiz()
+    ) : lessonIndex >= 0 ? (
+      <LinkCourseContext.Provider value={lessons}>{renderLesson(lessons[lessonIndex], lessonIndex)}</LinkCourseContext.Provider>
+    ) : (
+      renderSettings()
+    );
   const selectedKey = selected.kind === 'lesson' ? `lesson:${selected.id}` : selected.kind;
   const statusText =
     save === 'pending' || save === 'saving'
