@@ -16,6 +16,7 @@ import { AssignedToYou, LearningAssignPage, useAssignedCourses } from './CareHub
 import { assignedDone } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
 import { LearningCertificate, LearningHeaderLinks, LearningMyCertificates, LearningVerify } from './CareHubLearningCertificate';
+import { LearningReviewPage } from './CareHubLearningDrafts';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import {
   LearningReportCourse,
@@ -368,7 +369,8 @@ function LearningRoutes() {
   const onHome = rest === '' || rest === '/';
   const inStudio = /^\/studio(\/|$)/.test(rest);
   const inEditor = /^\/studio\/[^/]+/.test(rest);
-  const inPlayer = /^\/course\//.test(rest);
+  // drafts: the review page has its own header, like the player.
+  const inPlayer = /^\/(course|review)\//.test(rest);
   const inReports = /^\/reports(\/|$)/.test(rest);
   const inAssign = /^\/assign(\/|$)/.test(rest);
 
@@ -476,6 +478,7 @@ function LearningRoutes() {
           <Route path='certificates' element={<LearningMyCertificates workspaceId={workspaceId} />} />
           <Route path='certificate/:code' element={<LearningCertificate workspaceId={workspaceId} />} />
           <Route path='verify' element={<LearningVerify workspaceId={workspaceId} />} />
+          <Route path='review/:token' element={<LearningReviewPage workspaceId={workspaceId} />} />
           <Route path='*' element={<Navigate to={LEARNING_PATH} replace />} />
         </Routes>
       )}
