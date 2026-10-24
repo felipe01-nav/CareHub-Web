@@ -3,6 +3,7 @@
 import { getTokenParsed } from '@/application/session/token';
 
 import { chCall, chErrorText, CH_API } from './CareHubCore';
+import { audioExtras, blankAudioExtras, blankVideoExtras, mediaExtrasProblems, videoExtras } from './CareHubLearningPlayer3';
 import {
   blankBlocks3,
   blocks3LinkProblems,
@@ -121,8 +122,8 @@ export type Block =
   | { id: string; type: 'list'; style: ListStyle; items: string[] }
   | { id: string; type: 'divider' }
   | { id: string; type: 'image'; url: string; alt: string; caption: string; width: ImageWidth }
-  | { id: string; type: 'video'; url: string; caption: string }
-  | { id: string; type: 'audio'; url: string; caption: string }
+  | { id: string; type: 'video'; url: string; caption: string; captions_url: string; captions_label: string; transcript: string }
+  | { id: string; type: 'audio'; url: string; caption: string; transcript: string }
   | { id: string; type: 'file'; url: string; name: string }
   | { id: string; type: 'embed'; url: string; height: number }
   | { id: string; type: 'accordion'; items: TextItem[] }
@@ -558,9 +559,9 @@ export function normalizeBlock(raw: unknown): Block | null {
         width: oneOf(o.width, ['small', 'medium', 'full'], 'full'),
       };
     case 'video':
-      return { id, type: 'video', url: str(o.url), caption: str(o.caption) };
+      return { id, type: 'video', url: str(o.url), caption: str(o.caption), ...videoExtras(o) };
     case 'audio':
-      return { id, type: 'audio', url: str(o.url), caption: str(o.caption) };
+      return { id, type: 'audio', url: str(o.url), caption: str(o.caption), ...audioExtras(o) };
     case 'file':
       return { id, type: 'file', url: str(o.url), name: str(o.name) };
     case 'embed':
@@ -1214,9 +1215,9 @@ export function blankBlock(type: BlockType): Block {
     case 'image':
       return { id, type, url: '', alt: '', caption: '', width: 'full' };
     case 'video':
-      return { id, type, url: '', caption: '' };
+      return { id, type, url: '', caption: '', ...blankVideoExtras() };
     case 'audio':
-      return { id, type, url: '', caption: '' };
+      return { id, type, url: '', caption: '', ...blankAudioExtras() };
     case 'file':
       return { id, type, url: '', name: '' };
     case 'embed':
@@ -1583,6 +1584,7 @@ export function validateContent(c: Content): string[] {
         } else if (!urlAllowed(b.url)) out.push(`${media} in ${name} needs a link that starts with https://.`);
       }
 
+      mediaExtrasProblems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, urlAllowed, out);
       if (b.type === 'knowledge_check') questionProblems(b.question, `A knowledge check in ${name}`, out);
       if (b.type === 'labeled_graphic') labeledGraphicProblems(b, name, out);
       blocks3Problems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out, urlAllowed);

@@ -12,6 +12,7 @@ import { clampInt, EMBED_SITES, embedKind, newId, setQuestionKind, urlAllowed } 
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
 import { BLOCKS3_INFO, Blocks3Editor, LessonLinkWrap, LinkBlockContext } from './CareHubLearningBlocks3';
 import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
+import { MediaExtrasFields } from './CareHubLearningPlayer3';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
 
@@ -519,6 +520,9 @@ export function MediaField({
   hint,
   placeholder,
   uploadedName,
+  accept,
+  noun,
+  prepare,
 }: {
   kind: UploadKind;
   label: string;
@@ -529,6 +533,12 @@ export function MediaField({
   hint?: ReactNode;
   placeholder?: string;
   uploadedName?: string;
+  /** File types for the picker (instead of the kind's). */
+  accept?: string;
+  /** What to call the uploaded thing ("captions"). */
+  noun?: string;
+  /** Runs before upload: returns the file to send, or throws an Error whose message is shown. */
+  prepare?: (file: File) => Promise<File>;
 }) {
   const where = useContext(UploadContext);
   const id = useId();
@@ -545,8 +555,19 @@ export function MediaField({
   latest.current = { onChange, onUpload };
   useEffect(() => () => abort.current?.abort(), []);
 
-  const send = async (file: File) => {
+  const send = async (picked: File) => {
     if (!where || abort.current) return;
+    let file = picked;
+
+    if (prepare) {
+      try {
+        file = await prepare(picked);
+      } catch (e) {
+        setError(e instanceof Error && e.message ? e.message : `Couldn’t use “${picked.name}”.`);
+        return;
+      }
+    }
+
     const bad = uploadProblem(kind, file);
 
     if (bad) {
@@ -645,14 +666,14 @@ export function MediaField({
             <span className='chl-mark-right' aria-hidden='true'>
               ✓{' '}
             </span>
-            {uploadedName?.trim() ? `Uploaded “${uploadedName.trim()}”` : `Uploaded ${UPLOADED_NAME[kind]}`}
+            {uploadedName?.trim() ? `Uploaded “${uploadedName.trim()}”` : `Uploaded ${noun || UPLOADED_NAME[kind]}`}
           </span>
           {where && (
-            <SmallButton onClick={() => picker.current?.click()} ariaLabel={`Replace the ${UPLOADED_NAME[kind]}`}>
+            <SmallButton onClick={() => picker.current?.click()} ariaLabel={`Replace the ${noun || UPLOADED_NAME[kind]}`}>
               Replace
             </SmallButton>
           )}
-          <SmallButton onClick={() => latest.current.onChange('')} ariaLabel={`Remove the ${UPLOADED_NAME[kind]}`}>
+          <SmallButton onClick={() => latest.current.onChange('')} ariaLabel={`Remove the ${noun || UPLOADED_NAME[kind]}`}>
             Remove
           </SmallButton>
         </div>
@@ -665,7 +686,7 @@ export function MediaField({
       <input
         ref={picker}
         type='file'
-        accept={rule.accept || undefined}
+        accept={accept || rule.accept || undefined}
         className='hidden'
         tabIndex={-1}
         aria-hidden='true'
@@ -1465,6 +1486,12 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
           <Field label='Caption (optional)'>
             <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
           </Field>
+          <MediaExtrasFields
+            block={block}
+            onChange={onChange}
+            playerCaptions={Boolean(videoEmbedUrl(u))}
+            captionsField={(p) => <MediaField kind='file' {...p} />}
+          />
         </div>
       );
     }
@@ -1482,6 +1509,7 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
           <Field label='Caption (optional)'>
             <TextLine value={block.caption} onChange={(v) => onChange({ ...block, caption: v })} />
           </Field>
+          <MediaExtrasFields block={block} onChange={onChange} />
         </div>
       );
     case 'file':

@@ -24,6 +24,7 @@ import { Blocks3View, JumpLink } from './CareHubLearningBlocks3';
 import { coerceInteractAnswer, InteractQuestionView, isInteractKind, LabeledGraphicView } from './CareHubLearningInteract';
 import { UUID_RE } from './CareHubCore';
 import { chInputClass } from './CareHubUi';
+import { CaptionsTrack, MediaTranscript } from './CareHubLearningPlayer3';
 
 import type { Answer, Block, BlockOf, ChipTone, KcRecord, Preset, Question, ScenarioChoice } from './CareHubLearningApi';
 import type { Blocks3Kit } from './CareHubLearningBlocks3';
@@ -916,6 +917,7 @@ function AudioBlock({ block, ctx }: { block: BlockOf<'audio'>; ctx: BlockCtx }) 
           <RichText text={block.caption} />
         </figcaption>
       )}
+      <MediaTranscript text={block.transcript} kind='audio' Text={RichText} blockId={block.id} />
     </figure>
   );
 }
@@ -1063,6 +1065,9 @@ function EmbedBlock({ block, ctx }: { block: BlockOf<'embed'>; ctx: BlockCtx }) 
   );
 }
 
+/** How video captions are downloaded (Care Hub files with the sign-in token). */
+const CAPTION_FILES = { isCareHubFile, fetchFile: fetchCareHubFile };
+
 function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) {
   const embed = videoEmbedUrl(block.url);
   const file = useFileSrc(!embed && urlAllowed(block.url) ? block.url : '');
@@ -1077,6 +1082,7 @@ function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) 
       <figure className='m-0'>
         <VideoFrame src={embed} title={block.caption.trim() || 'Video'} />
         {caption}
+        <MediaTranscript text={block.transcript} kind='video' Text={RichText} blockId={block.id} />
       </figure>
     );
   }
@@ -1102,9 +1108,12 @@ function VideoBlock({ block, ctx }: { block: BlockOf<'video'>; ctx: BlockCtx }) 
           onPause={() => ctx.onMedia(block.id, false)}
           onEnded={() => ctx.onMedia(block.id, false)}
           onError={file.fail}
-        />
+        >
+          <CaptionsTrack url={urlAllowed(block.captions_url) ? block.captions_url : ''} label={block.captions_label} files={CAPTION_FILES} />
+        </video>
       )}
       {caption}
+      <MediaTranscript text={block.transcript} kind='video' Text={RichText} blockId={block.id} />
     </figure>
   );
 }

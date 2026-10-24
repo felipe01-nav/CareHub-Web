@@ -38,6 +38,7 @@ import {
 import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
 import { JumpArea } from './CareHubLearningBlocks3';
 import { isInteractKind } from './CareHubLearningInteract';
+import { CourseSearch } from './CareHubLearningPlayer3';
 import { ChNote } from './CareHubUi';
 
 import type {
@@ -1649,6 +1650,9 @@ function PlayerShell({
             )}
             <div className='min-w-0 flex-1 truncate text-sm text-text-secondary'>{showIntro ? '' : course.title.trim() || 'Untitled course'}</div>
             {!showIntro && <Chip tone={chip.tone}>{chip.label}</Chip>}
+            {!showIntro && view.kind !== 'quiz' && (
+              <CourseSearch lessons={lessons} shownBlocks={(l) => splitAtGate(l, doneBlocks).visible} />
+            )}
           </div>
         )}
         {notice && (
