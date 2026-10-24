@@ -45,6 +45,7 @@ import { describeChange, HistoryButtons, HistoryStatus, historyKey, useCourseHis
 import { ImportQuestionsDialog } from './CareHubLearningImport';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { CourseLookSettings, CoverLayoutField, LessonIcon, LessonLookEditor } from './CareHubLearningLook';
+import { AnnounceChoice, AnnounceDone, CheckDueChip, ReviewField, useAnnounce } from './CareHubLearningNotices';
 import { PasteTextDialog } from './CareHubLearningPaste';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import { drawnCount, QuestionBanksPage, QuizDrawsEditor, useBankCopies, withDraws } from './CareHubLearningQbank';
@@ -430,6 +431,7 @@ function StudioRowView({
           {everPublished ? ` · ${row.started} started · ${row.finished} finished` : ''}
         </span>
       </button>
+      <CheckDueChip courseId={row.id} title={row.title} />
       <div className='flex flex-wrap gap-1.5'>
         <Button type='button' size='sm' onClick={onEdit}>
           Edit
@@ -811,12 +813,22 @@ function PublishModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState<number | null>(null);
+  const announce = useAnnounce(courseId, everPublished);
 
   const go = async () => {
+    const missing = announce.check(note);
+
+    if (missing) {
+      setError(missing);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
-      setDone(await onPublish(note));
+      const version = await onPublish(note);
+
+      setDone(version);
+      announce.afterPublish(version);
     } catch (e) {
       setError(lErrorText(e));
     } finally {
@@ -843,6 +855,7 @@ function PublishModal({
           <div>
             <CopyLinkButton courseId={courseId} />
           </div>
+          <AnnounceDone a={announce} />
         </div>
       </CareHubModal>
     );
@@ -885,8 +898,9 @@ function PublishModal({
               : 'Learners will get this new version.'
             : 'Once published, people in this workspace can take the course.'}
         </p>
-        <Field label='What changed? (optional)'>
-          <TextLine value={note} onChange={setNote} placeholder='e.g. Updated the refund steps' maxLength={300} />
+        <AnnounceChoice a={announce} />
+        <Field label={announce.needsNote ? 'What changed?' : 'What changed? (optional)'}>
+          <TextLine id={announce.noteId} value={note} onChange={setNote} placeholder='e.g. Updated the refund steps' maxLength={300} />
         </Field>
         {error && <ChNote tone='error'>{error}</ChNote>}
       </div>
@@ -2160,6 +2174,7 @@ function Editor({
                 <span>months (people take the course again)</span>
               </span>
             </Field>
+            <ReviewField workspaceId={workspaceId} courseId={courseId} value={s.review_months} onChange={(v) => setSettings({ review_months: v })} />
           </div>
         </ChSection>
         <ChSection title='Who can find it'>

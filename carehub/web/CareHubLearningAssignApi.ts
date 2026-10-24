@@ -117,6 +117,8 @@ export interface Assignee {
   /** When their finish runs out; null = never. */
   expires_ms: number | null;
   expired: boolean;
+  /** Marked complete by hand (null = not, or that finish isn't their latest any more). Missing on older servers: no Mark complete / Undo then. */
+  marked?: MarkedComplete | null;
 }
 
 export type AssignCourseStatus = 'published' | 'archived' | 'draft';
@@ -305,6 +307,92 @@ export interface PathAssignBody extends DueBody {
 }
 
 // ---------------------------------------------------------------------------
+// Telling people about a new version, check reminders, marking someone complete by hand, path reports
+// ---------------------------------------------------------------------------
+
+export type AnnounceAction = 'tell' | 'retake';
+
+/** Before publishing again: how many people (not you) finished an earlier version, and how many of them have it assigned. */
+export interface AnnounceInfo {
+  published_version: number | null;
+  /** The last version people were told about (null = none yet). */
+  announced_version: number | null;
+  finished: number;
+  assigned: number;
+}
+
+export interface AnnounceBody {
+  /** The version that's live now (the one just published). */
+  version: number;
+  action: AnnounceAction;
+  /** "Ask them to take it again" only: days the people who have it assigned get (1-365). */
+  due_days?: number;
+}
+
+export interface AnnounceResult {
+  /** People were already told about this version, so nothing was sent again. */
+  already: boolean;
+  version: number;
+  action: AnnounceAction;
+  /** How many people were told (or asked to take it again). */
+  people: number;
+  /** How many of them got a due date. */
+  assigned: number;
+}
+
+/** "Remind me to check this course": when it was last updated (published) or checked, and when the next check is due. */
+export interface ContentCheck {
+  course_id: string;
+  every_months: number;
+  last_kind: 'published' | 'checked';
+  last_ms: number;
+  due_ms: number;
+  due: boolean;
+}
+
+/** Someone marked this person complete by hand (e.g. after classroom training). */
+export interface MarkedComplete {
+  by_name: string;
+  ms: number;
+  reason: string;
+}
+
+export interface PathReportStep {
+  course_id: string;
+  status: AssigneeStatus;
+  percent: number;
+  completed_ms: number | null;
+  due_ms: number | null;
+  overdue: boolean;
+}
+
+export interface PathReportPerson {
+  uid: string;
+  name: string;
+  email: string;
+  status: PathStatus;
+  percent: number;
+  finished_courses: number;
+  total_courses: number;
+  due_ms: number | null;
+  overdue: boolean;
+  assigned_ms: number;
+  /** One per course in PathReport.courses, in the same order. */
+  steps: PathReportStep[];
+}
+
+/** Everyone on a path and how far they are with each of its courses (the published ones, in path order). */
+export interface PathReport {
+  path: { id: string; title: string; in_order: boolean; archived: boolean };
+  courses: PathStepRef[];
+  people: PathReportPerson[];
+}
+
+export const MAX_MARK_REASON = 200;
+/** "Ask them to take it again": days people who have it assigned get, unless the author picks another number. */
+export const RETAKE_DAYS = 14;
+
+// ---------------------------------------------------------------------------
 // Defensive parsing
 // ---------------------------------------------------------------------------
 
@@ -423,6 +511,7 @@ function assigneeOf(raw: unknown): Assignee {
     completed_ms: numOrNull(o.completed_ms),
     expires_ms: numOrNull(o.expires_ms),
     expired: bool(o.expired),
+    ...('marked' in o ? { marked: markedOf(o.marked) } : {}),
   };
 }
 
@@ -635,6 +724,76 @@ function myPathOf(raw: unknown): MyPath {
   };
 }
 
+const ANNOUNCE_ACTIONS: readonly AnnounceAction[] = ['tell', 'retake'];
+const STEP_STATUSES: readonly AssigneeStatus[] = ['not_started', ...LEARN_STATUSES];
+
+/** Null when it isn't there (not marked complete by hand). */
+export function markedOf(raw: unknown): MarkedComplete | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = obj(raw);
+
+  return { by_name: str(o.by_name).trim(), ms: num(o.ms), reason: str(o.reason).trim() };
+}
+
+function contentCheckOf(raw: unknown): ContentCheck | null {
+  const o = obj(raw);
+  const id = str(o.course_id);
+  const due = numOrNull(o.due_ms);
+
+  if (!id || due === null) return null;
+  return {
+    course_id: id,
+    every_months: count(o.every_months),
+    last_kind: o.last_kind === 'checked' ? 'checked' : 'published',
+    last_ms: num(o.last_ms),
+    due_ms: due,
+    due: bool(o.due),
+  };
+}
+
+function pathReportStepOf(raw: unknown, courseId: string): PathReportStep {
+  const o = obj(raw);
+
+  return {
+    course_id: courseId,
+    status: oneOf(o.status, STEP_STATUSES, 'not_started'),
+    percent: clampInt(num(o.percent), 0, 100),
+    completed_ms: numOrNull(o.completed_ms),
+    due_ms: numOrNull(o.due_ms),
+    overdue: bool(o.overdue),
+  };
+}
+
+function pathReportPersonOf(raw: unknown, courses: PathStepRef[]): PathReportPerson {
+  const o = obj(raw);
+  const byCourse = new Map(arr(o.steps).map((s) => [str(obj(s).course_id), s]));
+
+  return {
+    ...pathPersonOf(o),
+    // One step per course, in the report's order (a missing one counts as not started).
+    steps: courses.map((c) => pathReportStepOf(byCourse.get(c.course_id), c.course_id)),
+  };
+}
+
+function pathReportOf(raw: unknown): PathReport {
+  const o = obj(raw);
+  const p = obj(o.path);
+  const id = str(p.id);
+
+  if (!id) throw new Error(PATH_NOT_FOUND);
+  const courses = arr(o.courses)
+    .map(stepRefOf)
+    .filter((c): c is PathStepRef => c !== null);
+
+  return {
+    path: { id, title: str(p.title).trim() || 'Untitled path', in_order: bool(p.in_order, true), archived: bool(p.archived) },
+    courses,
+    people: arr(o.people)
+      .map((x) => pathReportPersonOf(x, courses))
+      .filter((x) => x.uid),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Server calls
 // ---------------------------------------------------------------------------
@@ -774,6 +933,60 @@ export const aapi = {
         .map(myPathOf)
         .filter((p) => p.id && p.steps.length)
     ),
+
+  // Telling people about a new version: called right after a publish (the publish never depends on it).
+  announceInfo: (ws: string, courseId: string) =>
+    chCall<unknown>('get', `${base(ws)}/studio/${enc(courseId)}/announce`).then((d): AnnounceInfo => {
+      const o = obj(d);
+
+      return {
+        published_version: numOrNull(o.published_version),
+        announced_version: numOrNull(o.announced_version),
+        finished: count(o.finished),
+        assigned: count(o.assigned),
+      };
+    }),
+  /** Once per version: the same version again sends nothing (`already`). */
+  announce: (ws: string, courseId: string, body: AnnounceBody) =>
+    chCall<unknown>('post', `${base(ws)}/studio/${enc(courseId)}/announce`, body).then((d): AnnounceResult => {
+      const o = obj(d);
+
+      return {
+        already: bool(o.already),
+        version: count(o.version) || body.version,
+        action: oneOf(o.action, ANNOUNCE_ACTIONS, body.action),
+        people: count(o.people),
+        assigned: count(o.assigned),
+      };
+    }),
+  /** Published courses with "Remind me to check this course" switched on. */
+  contentChecks: (ws: string) =>
+    chCall<unknown>('get', `${base(ws)}/content-checks`).then((d) =>
+      arr(obj(d).checks)
+        .map(contentCheckOf)
+        .filter((c): c is ContentCheck => c !== null)
+    ),
+  /** Resets the reminder clock without publishing. `due_ms` is null when no reminder runs (not published, or "Never"). */
+  markChecked: (ws: string, courseId: string) =>
+    chCall<unknown>('post', `${base(ws)}/studio/${enc(courseId)}/mark-checked`, {}).then((d) => {
+      const o = obj(d);
+
+      return { checked_ms: num(o.checked_ms, Date.now()), due_ms: numOrNull(o.due_ms) };
+    }),
+  markComplete: (ws: string, assignmentId: string, uid: string, reason: string) =>
+    chCall<unknown>('post', `${base(ws)}/assignments/${enc(assignmentId)}/mark-complete`, reason ? { uid, reason } : { uid }).then((d) => {
+      const o = obj(d);
+
+      return { completed_ms: num(o.completed_ms, Date.now()), marked: markedOf(o.marked) };
+    }),
+  /** Puts back what was there before the hand-marked finish. Answers with the status and percent they're back to. */
+  undoComplete: (ws: string, assignmentId: string, uid: string) =>
+    chCall<unknown>('post', `${base(ws)}/assignments/${enc(assignmentId)}/undo-complete`, { uid }).then((d) => {
+      const o = obj(d);
+
+      return { status: oneOf(o.status, STEP_STATUSES, 'not_started'), percent: clampInt(num(o.percent), 0, 100) };
+    }),
+  pathReport: (ws: string, pathId: string) => chCall<unknown>('get', `${base(ws)}/paths/${enc(pathId)}/report`).then(pathReportOf),
 };
 
 export const CERT_NOT_FOUND = 'We couldn’t find a certificate with that code.';
@@ -957,6 +1170,18 @@ export function longDate(ms: number) {
   return `${p.d} ${MONTHS_LONG[p.m]} ${p.y}`;
 }
 
+/** "21 Oct" (with the year when it isn't this year, or always with `withYear`: "21 Oct 2026"). */
+export function dayMonth(ms: number, withYear = false) {
+  const p = dayParts(ms);
+
+  return `${p.d} ${MONTHS[p.m]}${withYear || p.y !== new Date().getFullYear() ? ` ${p.y}` : ''}`;
+}
+
+/** "Marked complete by Jordan Lee on 21 Oct". */
+export function markedText(m: MarkedComplete) {
+  return `Marked complete by ${m.by_name || 'someone'} on ${dayMonth(m.ms)}`;
+}
+
 /** "Due today", "Due tomorrow" or "Due Fri 30 Oct". */
 export function dueText(dueMs: number, tz?: number | null, now = Date.now()) {
   const diff = dayNumber(dayParts(dueMs, tz)) - dayNumber(dayParts(now, tz));
@@ -966,13 +1191,24 @@ export function dueText(dueMs: number, tz?: number | null, now = Date.now()) {
   return `Due ${shortDate(dueMs, tz)}`;
 }
 
-/** The chip for a learner's due date: red when overdue, amber when it's today or tomorrow. Null when there's no due date. */
-export function dueChip(due: { due_ms: number | null; overdue?: boolean }, done: boolean, now = Date.now()): { label: string; tone: ChipTone } | null {
+/**
+ * The chip for a learner's due date: red when overdue, amber when it's today or tomorrow. Null when there's no due date.
+ * `date` is the day ("Fri 30 Oct") when the label doesn't say it ("Overdue", "Due today", "Due tomorrow"), else "". Show it as
+ * `{label}<span className='sr-only sm:not-sr-only'> · {date}</span>`: always in what screen readers say, seen on wider screens.
+ */
+export function dueChip(
+  due: { due_ms: number | null; overdue?: boolean },
+  done: boolean,
+  now = Date.now()
+): { label: string; date: string; tone: ChipTone } | null {
   if (due.due_ms === null) return null;
-  if (!done && (due.overdue || due.due_ms < now)) return { label: 'Overdue', tone: 'red' };
-  const label = dueText(due.due_ms, null, now);
+  const date = shortDate(due.due_ms);
 
-  return { label, tone: !done && label !== `Due ${shortDate(due.due_ms)}` ? 'amber' : 'gray' };
+  if (!done && (due.overdue || due.due_ms < now)) return { label: 'Overdue', date, tone: 'red' };
+  const label = dueText(due.due_ms, null, now);
+  const dated = label === `Due ${date}`;
+
+  return { label, date: dated ? '' : date, tone: !done && !dated ? 'amber' : 'gray' };
 }
 
 /** Value for <input type="date"> ("2026-10-30"). */

@@ -1313,6 +1313,7 @@ function PathCard({ p, onOpen }: { p: MyPath; onOpen: (courseId: string) => void
               due && (
                 <Chip tone={due.tone} title={p.due_ms !== null ? `Due ${new Date(p.due_ms).toLocaleDateString()}` : undefined}>
                   {due.label}
+                  {due.date && <span className='sr-only sm:not-sr-only'> · {due.date}</span>}
                 </Chip>
               )
             )}

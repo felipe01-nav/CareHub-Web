@@ -15,13 +15,14 @@ import { formatDuration, isTransientError, LEARNING_PATH, learningNotLive, lErro
 import { learningTitle, usePageTitle } from './CareHubLearningA11y';
 // CareHubLearningAssignApi also imports reportsApi from this file. That's fine: each side only uses the other
 // inside functions, never while the files are first loaded.
-import { assignCoursePath, certificatePath, groupPath, shortDate } from './CareHubLearningAssignApi';
+import { aapi, assignCoursePath, certificatePath, dayMonth, groupPath, markedOf, markedText, shortDate } from './CareHubLearningAssignApi';
 import { Chip, ProgressBar, RichText } from './CareHubLearningBlocks';
 import { LearningReportsOverview } from './CareHubLearningOverview';
 import { SurveyResults } from './CareHubLearningQbank';
 import { CareHubModal, ChCard, chInputClass, ChNote, ChSection } from './CareHubUi';
 
 import type { LearnStatus } from './CareHubLearningApi';
+import type { MarkedComplete, PathReportStep } from './CareHubLearningAssignApi';
 
 export const REPORTS_PATH = `${LEARNING_PATH}/reports`;
 export const PEOPLE_PATH = `${REPORTS_PATH}/people`;
@@ -76,6 +77,8 @@ export interface ReportProgress {
   /** When their finish runs out (the course needs renewing); null = never. */
   expires_ms: number | null;
   expired: boolean;
+  /** Marked complete by hand (null = not, or an older server). */
+  marked: MarkedComplete | null;
 }
 
 export interface CourseReportRow extends ReportPerson, ReportProgress {
@@ -256,6 +259,7 @@ function progressOf(o: Record<string, unknown>): ReportProgress {
     ack_ms: numOrNull(o.ack_ms),
     expires_ms: numOrNull(o.expires_ms),
     expired: o.expired === true,
+    marked: markedOf(o.marked),
   };
 }
 
@@ -1044,17 +1048,18 @@ function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-function ReportsNav({ active }: { active: 'overview' | 'courses' | 'people' | 'teams' }) {
+function ReportsNav({ active }: { active: 'overview' | 'courses' | 'people' | 'teams' | 'paths' }) {
   const navigate = useNavigate();
   const items = [
     { id: 'overview' as const, label: 'Overview', to: REPORTS_PATH },
     { id: 'courses' as const, label: 'Courses', to: COURSES_PATH },
     { id: 'people' as const, label: 'People', to: PEOPLE_PATH },
     { id: 'teams' as const, label: 'Teams', to: TEAMS_PATH },
+    { id: 'paths' as const, label: 'Paths', to: `${REPORTS_PATH}?tab=paths` },
   ];
 
   return (
-    <nav aria-label='Reports' className='inline-flex rounded-[10px] border border-border-primary p-0.5'>
+    <nav aria-label='Reports' className='inline-flex max-w-full flex-wrap rounded-[10px] border border-border-primary p-0.5'>
       {items.map((t) => (
         <button
           key={t.id}
@@ -1235,15 +1240,17 @@ function assignedFor(c: CourseSummary, by: Map<string, TeamCourseStat>): { assig
   return by.get(c.id) ?? (c.status === 'published' ? { assigned: 0, overdue: 0 } : null);
 }
 
-/** The reports home: the Overview tab, or the course list with `?tab=courses`. */
+/** The reports home: the Overview tab, the course list with `?tab=courses`, or the path report with `?tab=paths`. */
 export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId: string; canBuild: boolean }) {
   const { search } = useLocation();
-  const courses = new URLSearchParams(search).get('tab') === 'courses';
+  const tab = new URLSearchParams(search).get('tab');
+  const courses = tab === 'courses';
 
-  usePageTitle(learningTitle(courses ? 'Courses' : '', 'Reports'));
+  usePageTitle(learningTitle(courses ? 'Courses' : tab === 'paths' ? 'Paths' : '', 'Reports'));
   if (courses) {
     return <ReportsCourseList workspaceId={workspaceId} canBuild={canBuild} />;
   }
+  if (tab === 'paths') return <ReportsPaths workspaceId={workspaceId} />;
   return <LearningReportsOverview workspaceId={workspaceId} nav={<ReportsNav active='overview' />} />;
 }
 
@@ -1457,6 +1464,266 @@ function ReportsCourseList({ workspaceId, canBuild }: { workspaceId: string; can
 }
 
 // ---------------------------------------------------------------------------
+// Paths (?tab=paths, &path=<id> for one path)
+// ---------------------------------------------------------------------------
+
+const PATH_REPORT_NOT_LIVE = 'This report isn’t available yet. Please try again in a few minutes.';
+
+/** "Marked complete by Jordan Lee on 21 Oct — Classroom training on 21 Oct". */
+function markedLabel(m: MarkedComplete) {
+  return `${markedText(m)}${m.reason ? ` — ${m.reason}` : ''}`;
+}
+
+/** The "Marked complete by" CSV cell: "Jordan Lee on 21 Oct 2026 — Classroom training on 21 Oct". */
+function markedCsv(m: MarkedComplete | null) {
+  return m ? `${m.by_name || 'Someone'} on ${dayMonth(m.ms, true)}${m.reason ? ` — ${m.reason}` : ''}` : null;
+}
+
+function MarkedLine({ m }: { m: MarkedComplete | null }) {
+  return m ? (
+    <span className='mt-0.5 block text-xs text-text-tertiary' data-testid='carehub-learning-report-marked'>
+      {markedLabel(m)}
+    </span>
+  ) : null;
+}
+
+function stepDone(s: PathReportStep) {
+  return s.status === 'completed' || s.status === 'passed';
+}
+
+function stepCsv(s: PathReportStep) {
+  const text = stepDone(s)
+    ? s.completed_ms
+      ? `Finished ${dayMonth(s.completed_ms, true)}`
+      : 'Finished'
+    : s.status === 'failed'
+      ? 'Didn’t pass'
+      : s.status === 'not_started'
+        ? 'Not started'
+        : `In progress ${s.percent}%`;
+
+  return s.overdue ? `${text} (overdue)` : text;
+}
+
+function StepCell({ s }: { s: PathReportStep }) {
+  let cell: ReactNode;
+
+  if (stepDone(s)) {
+    const day = s.completed_ms ? dayMonth(s.completed_ms) : '';
+
+    cell = (
+      <>
+        <span aria-hidden='true'>
+          <Chip tone='green'>✓{day ? ` ${day}` : ''}</Chip>
+        </span>
+        <span className='sr-only'>{day ? `Finished on ${day}` : 'Finished'}</span>
+      </>
+    );
+  } else if (s.status === 'not_started') {
+    cell = <span className='whitespace-nowrap text-text-tertiary'>Not started</span>;
+  } else if (s.status === 'failed') {
+    cell = <span className='whitespace-nowrap'>Didn’t pass</span>;
+  } else {
+    cell = (
+      <>
+        <span aria-hidden='true' className='tabular-nums'>
+          {s.percent}%
+        </span>
+        <span className='sr-only'>In progress, {s.percent}%</span>
+      </>
+    );
+  }
+  return (
+    <span className='flex flex-wrap items-center gap-1'>
+      {cell}
+      {s.overdue && <Chip tone='red'>Overdue</Chip>}
+    </span>
+  );
+}
+
+function ReportsPaths({ workspaceId }: { workspaceId: string }) {
+  const navigate = useNavigate();
+  const { search } = useLocation();
+  const asked = new URLSearchParams(search).get('path') || '';
+  const load = useCallback(() => aapi.paths(workspaceId), [workspaceId]);
+  const { data, error, reload } = useLoad(load);
+  const paths = useMemo(
+    () => [...(data || [])].sort((a, b) => Number(a.archived) - Number(b.archived) || a.title.localeCompare(b.title)),
+    [data]
+  );
+  const picked = paths.find((p) => p.id === asked) ?? paths[0] ?? null;
+
+  let body: ReactNode;
+
+  if (!data) {
+    body = error ? <LoadError error={error} onRetry={reload} /> : <Loading />;
+  } else if (!paths.length) {
+    body = (
+      <div className='rounded-[16px] border border-dashed border-border-primary px-5 py-10 text-center'>
+        <div className='text-4xl' aria-hidden='true'>
+          🧭
+        </div>
+        <div className='mt-3 text-lg font-semibold'>No learning paths yet</div>
+        <p className='mx-auto mt-1 max-w-[440px] text-sm text-text-secondary'>
+          A path is a set of courses people take in turn. Once one is made on the Assign page, you can see here how far everyone on it has got.
+        </p>
+      </div>
+    );
+  } else if (picked) {
+    body = (
+      <>
+        <div className='mb-4'>
+          <label className='flex flex-wrap items-center gap-2 text-sm'>
+            <span className='text-text-secondary'>Path</span>
+            <select
+              className={cn(chInputClass, 'max-w-full pr-7')}
+              value={picked.id}
+              onChange={(e) => navigate(`${REPORTS_PATH}?tab=paths&path=${encodeURIComponent(e.target.value)}`)}
+              data-testid='carehub-learning-report-path-pick'
+            >
+              {paths.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                  {p.archived ? ' (archived)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <PathReportView key={picked.id} workspaceId={workspaceId} pathId={picked.id} />
+      </>
+    );
+  }
+
+  return (
+    <div data-testid='carehub-learning-report-paths'>
+      <div className='mb-5 flex flex-wrap items-center gap-2'>
+        <ReportsNav active='paths' />
+      </div>
+      {body}
+    </div>
+  );
+}
+
+function PathReportView({ workspaceId, pathId }: { workspaceId: string; pathId: string }) {
+  const navigate = useNavigate();
+  const load = useCallback(() => aapi.pathReport(workspaceId, pathId), [workspaceId, pathId]);
+  const { data, error, reload } = useLoad(load);
+  const [query, setQuery] = useState('');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+
+  if (!data) {
+    if (error && learningNotLive(error)) return <ChNote>{PATH_REPORT_NOT_LIVE}</ChNote>;
+    return error ? <LoadError error={error} onRetry={reload} /> : <Loading />;
+  }
+
+  const { path, courses, people } = data;
+  const title = path.title.trim() || 'This path';
+  const shown = people.filter((p) => (!overdueOnly || p.overdue) && matches(p, query));
+  const overdue = people.filter((p) => p.overdue).length;
+  const finished = people.filter((p) => p.status === 'finished').length;
+
+  const csv = () =>
+    downloadCsv(
+      `path-report-${slug(title, 'path')}`,
+      ['Name', 'Email', 'Courses finished', 'Due', 'Overdue', ...courses.map((c) => c.title)],
+      people.map((p) => [
+        nameOf(p),
+        p.email,
+        p.finished_courses,
+        p.due_ms !== null ? dayStamp(p.due_ms) : null,
+        p.overdue ? 'Yes' : 'No',
+        ...p.steps.map(stepCsv),
+      ])
+    );
+
+  if (!people.length) {
+    return (
+      <>
+        {error ? <RefreshError error={error} onRetry={reload} /> : null}
+        <EmptyBox>Nobody is on this path yet.</EmptyBox>
+      </>
+    );
+  }
+
+  return (
+    <div data-testid='carehub-learning-report-path'>
+      {error ? <RefreshError error={error} onRetry={reload} /> : null}
+      <Cards>
+        <ChCard label='People' value={people.length} hint={path.in_order ? 'Courses taken in order' : 'Courses in any order'} />
+        <ChCard label='Finished the path' value={finished} hint={`${pct(finished, people.length)}% of people`} />
+        <ChCard label='Overdue' value={overdue} hint={overdue ? 'Past their next due date' : 'Nobody is late'} />
+      </Cards>
+      <Toolbar>
+        <SearchBox value={query} onChange={setQuery} label='Search people' />
+        <ToggleChip on={overdueOnly} onClick={() => setOverdueOnly((v) => !v)} testId='carehub-learning-report-overdue-only'>
+          Overdue only
+        </ToggleChip>
+        <div className='flex-1' />
+        <CsvButton onClick={csv} />
+      </Toolbar>
+      {shown.length ? (
+        <div
+          role='region'
+          aria-label={`${title} progress`}
+          tabIndex={0}
+          className='relative overflow-x-auto rounded-[12px] border border-border-primary outline-none focus-visible:ring-2 focus-visible:ring-border-theme-thick'
+          data-testid='carehub-learning-report-path-table'
+        >
+          <table className='w-full border-collapse text-sm'>
+            <thead>
+              <tr className='text-left text-xs text-text-tertiary'>
+                <th scope='col' className='sticky left-0 z-[1] bg-background-primary px-3 py-2 font-normal'>
+                  Name
+                </th>
+                <th scope='col' className='whitespace-nowrap px-3 py-2 font-normal'>
+                  Courses
+                </th>
+                <th scope='col' className='whitespace-nowrap px-3 py-2 font-normal'>
+                  Due
+                </th>
+                {courses.map((c) => (
+                  <th key={c.course_id} scope='col' className='min-w-[120px] px-3 py-2 align-bottom font-normal'>
+                    {c.title}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((p) => (
+                <tr key={p.uid} className='border-t border-border-primary' data-testid='carehub-learning-report-path-row'>
+                  <th scope='row' className='sticky left-0 z-[1] min-w-[160px] max-w-[240px] bg-background-primary px-3 py-2 text-left font-normal'>
+                    <button type='button' className='max-w-full text-left hover:underline' onClick={() => navigate(`${PEOPLE_PATH}/${encodeURIComponent(p.uid)}`)}>
+                      <PersonCell p={p} />
+                    </button>
+                  </th>
+                  <td className='whitespace-nowrap px-3 py-2'>
+                    {p.finished_courses} of {plural(p.total_courses, 'course')}
+                  </td>
+                  <td className='px-3 py-2'>
+                    <span className='flex flex-wrap items-center gap-1'>
+                      <span className='whitespace-nowrap'>{p.due_ms !== null ? shortDate(p.due_ms) : '—'}</span>
+                      {p.overdue && <Chip tone='red'>Overdue</Chip>}
+                    </span>
+                  </td>
+                  {p.steps.map((st) => (
+                    <td key={st.course_id} className='px-3 py-2'>
+                      <StepCell s={st} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyBox>{overdueOnly && !query.trim() ? 'Nobody on this path is overdue.' : 'No one matches.'}</EmptyBox>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // One course
 // ---------------------------------------------------------------------------
 
@@ -1564,7 +1831,13 @@ function courseCols(quiz: boolean, latest: number, showDue: boolean, openCert: (
       label: 'Finished',
       desc: true,
       sort: (r) => r.e?.completed_ms ?? null,
-      cell: (r) => (r.e?.completed_ms ? <When ms={r.e.completed_ms} /> : null),
+      cell: (r) =>
+        r.e?.completed_ms ? (
+          <>
+            <When ms={r.e.completed_ms} />
+            <MarkedLine m={r.e.marked} />
+          </>
+        ) : null,
     },
   ];
 }
@@ -1664,6 +1937,7 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
       'Finished',
       'Acknowledged',
       'Version',
+      'Marked complete by',
     ];
     const lines = people.map(({ person, e }): CsvValue[] =>
       e
@@ -1679,6 +1953,7 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
             csvDate(e.completed_ms),
             csvDate(e.ack_ms),
             e.version || null,
+            markedCsv(e.marked),
           ]
         : [person.name, person.email, 'Not started', ...header.slice(3).map(() => null)]
     );
@@ -2388,7 +2663,13 @@ function PersonReportView({ workspaceId, uid }: { workspaceId: string; uid: stri
         label: 'Finished',
         desc: true,
         sort: (r) => r.completed_ms,
-        cell: (r) => (r.completed_ms ? <When ms={r.completed_ms} /> : null),
+        cell: (r) =>
+          r.completed_ms ? (
+            <>
+              <When ms={r.completed_ms} />
+              <MarkedLine m={r.marked} />
+            </>
+          ) : null,
       }
     );
     if (hasAcks) {
@@ -2435,6 +2716,7 @@ function PersonReportView({ workspaceId, uid }: { workspaceId: string; uid: stri
       'Last activity',
       'Finished',
       'Acknowledged',
+      'Marked complete by',
     ];
     const lines: CsvValue[][] = rows.map((r) => [
       r.title,
@@ -2447,6 +2729,7 @@ function PersonReportView({ workspaceId, uid }: { workspaceId: string; uid: stri
       csvDate(r.last_ms),
       csvDate(r.completed_ms),
       csvDate(r.ack_ms),
+      markedCsv(r.marked),
     ]);
 
     for (const c of notStarted || []) lines.push([c.title, 'Not started', ...header.slice(2).map(() => null)]);

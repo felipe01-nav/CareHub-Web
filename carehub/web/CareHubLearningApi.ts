@@ -237,6 +237,7 @@ export interface CourseSettings {
   certificate: boolean;
   /** Months until a finish runs out and people take the course again (1-60); null = never. */
   recert_months: number | null;
+  review_months: number | null;
 }
 
 export interface Lesson {
@@ -755,6 +756,7 @@ export function normalizeContent(raw: unknown): Content {
       ...readCourseLook(s),
       certificate: bool(s.certificate),
       recert_months: recertMonths(s.recert_months),
+      review_months: Number.isInteger(s.review_months) && num(s.review_months) >= 1 && num(s.review_months) <= 24 ? num(s.review_months) : null,
     },
     lessons: arr(o.lessons).map(normalizeLesson),
     quiz: {
@@ -1256,6 +1258,7 @@ export function defaultSettings(): CourseSettings {
     catalog: true,
     certificate: false,
     recert_months: null,
+    review_months: null,
   };
 }
 

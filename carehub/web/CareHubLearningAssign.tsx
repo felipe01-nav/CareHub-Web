@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 import { formatWhen, UUID_RE } from './CareHubCore';
 import { formatMinutes, isTransientError, LEARNING_PATH, learningNotLive, lErrorText, plural, statusInfo } from './CareHubLearningApi';
-import { learningTitle, usePageTitle } from './CareHubLearningA11y';
+import { learningTitle, usePageTitle, useRefocus } from './CareHubLearningA11y';
 import {
   aapi,
   ASSIGN_PATH,
@@ -28,6 +28,7 @@ import {
   GROUPS_PATH,
   groupPath,
   loadAssignOverview,
+  markedText,
   MAX_GROUP_DESCRIPTION,
   MAX_DUE_DAYS,
   MAX_GROUP_NAME,
@@ -49,6 +50,7 @@ import {
   whyNotAssignable,
 } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, ProgressBar } from './CareHubLearningBlocks';
+import { MarkCompleteDialog, UndoCompleteDialog } from './CareHubLearningNotices';
 import { PEOPLE_PATH, REPORTS_PATH } from './CareHubLearningReports';
 import { CareHubModal, ChCard, chInputClass, ChNote, ChPersonChip, ChSection } from './CareHubUi';
 
@@ -1444,7 +1446,24 @@ function peopleRank(p: Assignee) {
   return 3;
 }
 
-function AssigneeRow({ p, index, canReports }: { p: Assignee; index: number; canReports: boolean }) {
+function AssigneeRow({
+  p,
+  index,
+  canReports,
+  canMark,
+  onMark,
+  onUndo,
+  reg,
+}: {
+  p: Assignee;
+  index: number;
+  canReports: boolean;
+  /** May mark people complete by hand (and undo it). Only when the server says who was (`marked` is there). */
+  canMark: boolean;
+  onMark: () => void;
+  onUndo: () => void;
+  reg: (key: string) => (el: HTMLElement | null) => void;
+}) {
   const navigate = useNavigate();
   const name = personName(p);
   const chip = assigneeChip(p);
@@ -1490,6 +1509,44 @@ function AssigneeRow({ p, index, canReports }: { p: Assignee; index: number; can
         <span className='text-xs tabular-nums text-text-secondary'>{p.percent}%</span>
       </span>
       <span className='w-[124px] shrink-0 text-right text-xs text-text-tertiary'>{when}</span>
+      {canMark && p.marked !== undefined && (
+        <span className='flex w-[128px] shrink-0 justify-end'>
+          {!isFinishedStatus(p.status) && (
+            <Button
+              ref={reg(`mark:${p.uid}`)}
+              type='button'
+              size='sm'
+              variant='outline'
+              aria-label={`Mark complete: ${name}`}
+              onClick={onMark}
+              data-testid='carehub-learning-mark-complete'
+            >
+              Mark complete
+            </Button>
+          )}
+        </span>
+      )}
+      {p.marked && (
+        <span className='flex w-full flex-wrap items-center gap-x-2 gap-y-1 pl-[40px] text-xs text-text-secondary' data-testid='carehub-learning-marked'>
+          <span className='min-w-0 break-words'>
+            {markedText(p.marked)}
+            {p.marked.reason ? ` — ${p.marked.reason}` : ''}
+          </span>
+          {canMark && (
+            <Button
+              ref={reg(`undo:${p.uid}`)}
+              type='button'
+              size='sm'
+              variant='ghost'
+              aria-label={`Undo mark complete: ${name}`}
+              onClick={onUndo}
+              data-testid='carehub-learning-undo-complete'
+            >
+              Undo mark complete
+            </Button>
+          )}
+        </span>
+      )}
     </li>
   );
 }
@@ -1503,11 +1560,19 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [notice, setNotice] = useFlash();
+  const refocus = useRefocus();
+  const [marking, setMarking] = useState<Assignee | null>(null);
+  const [undoing, setUndoing] = useState<Assignee | null>(null);
+  // What a Mark complete / Undo changed, shown straight away until the reloaded list arrives.
+  const [patch, setPatch] = useState<{ base: typeof data; people: Map<string, Partial<Assignee>> } | null>(null);
 
-  const people = useMemo(
-    () => [...(data?.people || [])].sort((a, b) => peopleRank(a) - peopleRank(b) || personName(a).localeCompare(personName(b))),
-    [data]
-  );
+  const people = useMemo(() => {
+    const changed = patch && patch.base === data ? patch.people : null;
+
+    return [...(data?.people || [])]
+      .map((p) => ({ ...p, ...changed?.get(p.uid) }))
+      .sort((a, b) => peopleRank(a) - peopleRank(b) || personName(a).localeCompare(personName(b)));
+  }, [data, patch]);
 
   usePageTitle(learningTitle(data ? targetLabel(data.assignment.target) : '', data?.assignment.course_title || '', 'Assign'));
   if (error && !data) {
@@ -1536,6 +1601,45 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
     { id: 'finished', label: 'Finished' },
     { id: 'overdue', label: 'Overdue' },
   ];
+  const patchPerson = (uid: string, change: Partial<Assignee>) =>
+    setPatch((old) => {
+      const changed = new Map(old && old.base === data ? old.people : []);
+
+      changed.set(uid, { ...changed.get(uid), ...change });
+      return { base: data, people: changed };
+    });
+  const markComplete = async (p: Assignee, reason: string) => {
+    const done = await aapi.markComplete(workspaceId, a.id, p.uid, reason);
+
+    patchPerson(p.uid, {
+      status: 'completed',
+      percent: 100,
+      completed_ms: done.completed_ms,
+      marked: done.marked ?? { by_name: '', ms: done.completed_ms, reason },
+      overdue: false,
+      expired: false,
+    });
+    refocus.later(`undo:${p.uid}`, `filter:${filter}`);
+    setMarking(null);
+    setNotice(`${personName(p)} is marked complete.`);
+    reload();
+  };
+  const undoComplete = async (p: Assignee) => {
+    const back = await aapi.undoComplete(workspaceId, a.id, p.uid);
+
+    patchPerson(p.uid, {
+      status: back.status,
+      percent: back.percent,
+      completed_ms: null,
+      marked: null,
+      overdue: p.due_ms !== null && p.due_ms < Date.now(),
+      expired: false,
+    });
+    refocus.later(`mark:${p.uid}`, `filter:${filter}`);
+    setUndoing(null);
+    setNotice(`Undone: ${personName(p)} is back to where they were.`);
+    reload();
+  };
 
   return (
     <>
@@ -1589,6 +1693,7 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
             {filters.map((f) => (
               <button
                 key={f.id}
+                ref={refocus.reg(`filter:${f.id}`)}
                 type='button'
                 aria-pressed={filter === f.id}
                 onClick={() => setFilter(f.id)}
@@ -1612,7 +1717,16 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
         {shown.length ? (
           <List testId='carehub-learning-assignees'>
             {shown.map((p, i) => (
-              <AssigneeRow key={p.uid} p={p} index={i} canReports={perms.canReports} />
+              <AssigneeRow
+                key={p.uid}
+                p={p}
+                index={i}
+                canReports={perms.canReports}
+                canMark={perms.canAssign}
+                onMark={() => setMarking(p)}
+                onUndo={() => setUndoing(p)}
+                reg={refocus.reg}
+              />
             ))}
           </List>
         ) : (
@@ -1643,6 +1757,15 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
           }}
         />
       )}
+      {marking && (
+        <MarkCompleteDialog
+          name={personName(marking)}
+          course={a.course_title}
+          onMark={(reason) => markComplete(marking, reason)}
+          onClose={() => setMarking(null)}
+        />
+      )}
+      {undoing && <UndoCompleteDialog name={personName(undoing)} onUndo={() => undoComplete(undoing)} onClose={() => setUndoing(null)} />}
     </>
   );
 }
@@ -2364,6 +2487,7 @@ function AssignedCard({ course, onOpen, onRetake }: { course: AssignedCourse; on
                 {due && (
                   <Chip tone={due.tone} title={course.assignment.due_ms !== null ? `Due ${new Date(course.assignment.due_ms).toLocaleDateString()}` : undefined}>
                     {due.label}
+                    {due.date && <span className='sr-only sm:not-sr-only'> · {due.date}</span>}
                   </Chip>
                 )}
                 {p?.status === 'failed' && <Chip tone='red'>Didn’t pass</Chip>}
