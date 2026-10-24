@@ -3,9 +3,9 @@
 // course) and are sent every ~15 s, on lesson change and when the tab is hidden, with retries — so a dropped
 // network never loses progress. Active time only counts while the page is visible, focused and in use
 // (or a video is playing).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
@@ -33,10 +33,22 @@ import {
   requiredSeconds,
   seededShuffle,
   statusInfo,
+  urlAllowed,
   writeQueue,
 } from './CareHubLearningApi';
 import { focusQuietly, focusSoon, learningTitle, usePageTitle } from './CareHubLearningA11y';
-import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
+import { TakeAgain } from './CareHubLearningAssign';
+import { shortDate } from './CareHubLearningAssignApi';
+import {
+  BlockView,
+  Chip,
+  CourseCover,
+  NarrowContext,
+  ProgressBar,
+  QuestionView,
+  RichText,
+  useFileSrc,
+} from './CareHubLearningBlocks';
 import { JumpArea } from './CareHubLearningBlocks3';
 import {
   branchBrowseNext,
@@ -56,6 +68,16 @@ import {
   usesBranching,
 } from './CareHubLearningBranching';
 import { isInteractKind } from './CareHubLearningInteract';
+import {
+  coverLayoutOf,
+  LessonIcon,
+  LookStyle,
+  sidebarOf,
+  textZoom,
+  TextSizeControl,
+  useTextSize,
+  wordsOf,
+} from './CareHubLearningLook';
 import { feedbackMap, ownQuestions, pickedFeedbackList, previewDrawn, uniqueQuestions } from './CareHubLearningQbank';
 import { CourseSearch } from './CareHubLearningPlayer3';
 import { ChNote } from './CareHubUi';
@@ -76,6 +98,7 @@ import type {
 } from './CareHubLearningApi';
 import type { BlockCtx } from './CareHubLearningBlocks';
 import type { BranchProgress, ShownLesson } from './CareHubLearningBranching';
+import type { Words } from './CareHubLearningLook';
 import type { SavedSurvey, SurveyAnswers, SurveyBlock } from './CareHubLearningQbank';
 
 type View = { kind: 'intro' } | { kind: 'lesson'; lessonId: string } | { kind: 'quiz' } | { kind: 'done' };
@@ -274,40 +297,85 @@ function NoticeBox({ text, onClose }: { text: string; onClose: () => void }) {
   );
 }
 
-function Intro({ course, onStart, busy, narrow }: { course: PlayCourse; onStart: () => void; busy: boolean; narrow: boolean }) {
+function Intro({
+  course,
+  onStart,
+  busy,
+  narrow,
+  words,
+  style,
+}: {
+  course: PlayCourse;
+  onStart: () => void;
+  busy: boolean;
+  narrow: boolean;
+  words: Words;
+  /** The learner's text size. */
+  style?: CSSProperties;
+}) {
   const minutes = course.est_minutes || estimateMinutes(course);
   const inside = course.lessons.filter((l) => !isSide(l)); // side lessons aren't listed
+  // Start page layout: card (today) · split (picture beside the words; stacked on phones) · full (words on the
+  // picture, under a dark layer) · plain (no picture).
+  const layout = coverLayoutOf(course.settings);
+  const full = layout === 'full';
+  const split = layout === 'split' && !narrow;
+  const cover = <CourseCover cover={course.cover} preset={course.preset} seed={course.id || course.title} />;
+  const empty = <ChNote>This course has no lessons yet.</ChNote>;
+  const body = (
+    <div className={cn('p-5', full && 'relative', split && 'min-w-0 flex-1 self-center')}>
+      <h1 className='text-2xl font-semibold leading-tight'>{course.title.trim() || 'Untitled course'}</h1>
+      {course.summary.trim() && (
+        <p className={cn('mt-2 text-[15px] leading-relaxed', full ? 'chl-look-soft' : 'text-text-secondary')}>
+          <RichText text={course.summary} />
+        </p>
+      )}
+      <div className='mt-3 flex flex-wrap gap-1.5'>
+        <Chip>{plural(mainCount(course.lessons), 'lesson')}</Chip>
+        {minutes > 0 && <Chip>About {formatMinutes(minutes)}</Chip>}
+        {course.quiz.enabled && (
+          <Chip tone='purple'>
+            {words('final_quiz')} · pass {course.settings.pass_mark}%
+          </Chip>
+        )}
+        {course.settings.sequential && <Chip>Lessons in order</Chip>}
+        {course.settings.require_ack && <Chip>Confirm at the end</Chip>}
+      </div>
+      <div className='mt-5'>
+        {course.lessons.length ? (
+          <Button type='button' size='lg' loading={busy} onClick={onStart} data-testid='carehub-learning-start'>
+            {words('start')}
+          </Button>
+        ) : full ? (
+          <div className='rounded-[10px] bg-background-primary text-text-primary'>{empty}</div>
+        ) : (
+          empty
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    <div className='mx-auto w-full max-w-[760px]'>
-      <div className='overflow-hidden rounded-[16px] border border-border-primary'>
-        <div className={narrow ? 'h-32' : 'h-44'}>
-          <CourseCover cover={course.cover} preset={course.preset} seed={course.id || course.title} />
-        </div>
-        <div className='p-5'>
-          <h1 className='text-2xl font-semibold leading-tight'>{course.title.trim() || 'Untitled course'}</h1>
-          {course.summary.trim() && (
-            <p className='mt-2 text-[15px] leading-relaxed text-text-secondary'>
-              <RichText text={course.summary} />
-            </p>
-          )}
-          <div className='mt-3 flex flex-wrap gap-1.5'>
-            <Chip>{plural(mainCount(course.lessons), 'lesson')}</Chip>
-            {minutes > 0 && <Chip>About {formatMinutes(minutes)}</Chip>}
-            {course.quiz.enabled && <Chip tone='purple'>Final quiz · pass {course.settings.pass_mark}%</Chip>}
-            {course.settings.sequential && <Chip>Lessons in order</Chip>}
-            {course.settings.require_ack && <Chip>Confirm at the end</Chip>}
-          </div>
-          <div className='mt-5'>
-            {course.lessons.length ? (
-              <Button type='button' size='lg' loading={busy} onClick={onStart} data-testid='carehub-learning-start'>
-                Start course
-              </Button>
-            ) : (
-              <ChNote>This course has no lessons yet.</ChNote>
-            )}
-          </div>
-        </div>
+    <div className='mx-auto w-full max-w-[760px]' style={style}>
+      <div
+        className={cn(
+          'overflow-hidden rounded-[16px] border border-border-primary',
+          split && 'flex',
+          full && 'chl-look-full relative'
+        )}
+      >
+        {(layout === 'card' || (layout === 'split' && narrow)) && (
+          <div className={narrow ? 'h-32' : 'h-44'}>{cover}</div>
+        )}
+        {split && <div className='min-h-[220px] w-[42%] shrink-0'>{cover}</div>}
+        {full && (
+          <>
+            <LookStyle />
+            <div className='absolute inset-0'>{cover}</div>
+            <div className='chl-look-shade absolute inset-0' />
+          </>
+        )}
+        {full ? <div className='relative flex min-h-[260px] flex-col justify-end'>{body}</div> : body}
       </div>
       {course.lessons.length > 0 && (
         <div className='mt-5'>
@@ -316,7 +384,10 @@ function Intro({ course, onStart, busy, narrow }: { course: PlayCourse; onStart:
             {inside.map((l, i) => (
               <li key={l.id} className='flex gap-2 text-sm text-text-secondary'>
                 <span className='w-5 shrink-0 text-text-tertiary'>{i + 1}.</span>
-                <span className='min-w-0 flex-1'>{l.title.trim() || `Lesson ${i + 1}`}</span>
+                <span className='min-w-0 flex-1'>
+                  <LessonIcon icon={l.icon} />
+                  {l.title.trim() || `Lesson ${i + 1}`}
+                </span>
               </li>
             ))}
             {course.quiz.enabled && (
@@ -324,7 +395,7 @@ function Intro({ course, onStart, busy, narrow }: { course: PlayCourse; onStart:
                 <span className='w-5 shrink-0' aria-hidden='true'>
                   📝
                 </span>
-                <span className='min-w-0 flex-1'>{course.quiz.title || 'Final quiz'}</span>
+                <span className='min-w-0 flex-1'>{course.quiz.title || words('final_quiz')}</span>
               </li>
             )}
           </ol>
@@ -350,6 +421,8 @@ function Outline({
   quizLocked,
   rows,
   lessonTotal,
+  words,
+  listId,
 }: {
   course: PlayCourse;
   view: View;
@@ -367,6 +440,9 @@ function Outline({
   /** The lessons to list (side lessons once opened) and how many count. */
   rows: ShownLesson[];
   lessonTotal: number;
+  words: Words;
+  /** The list's id (the top bar's Lessons button controls it). */
+  listId: string;
 }) {
   const summary = (
     <div>
@@ -380,7 +456,7 @@ function Outline({
     </div>
   );
   const list = (
-    <nav aria-label='Lessons' className='flex flex-col gap-0.5'>
+    <nav id={listId} aria-label={words('lessons')} className='flex flex-col gap-0.5'>
       {rows.map(({ lesson: l, index: i, number, side }) => {
         const done = isDone(l.id);
         const active = view.kind === 'lesson' && view.lessonId === l.id;
@@ -405,6 +481,7 @@ function Outline({
               {done ? '✓' : locked ? '🔒' : side ? <SideMark /> : number}
             </span>
             <span className='min-w-0 flex-1 break-words'>
+              <LessonIcon icon={l.icon} />
               {l.title.trim() || `Lesson ${number || i + 1}`}
               {side && <SideLessonNote />}
             </span>
@@ -435,7 +512,7 @@ function Outline({
           <span className={cn('w-5 shrink-0 text-center', quizPassed && 'chl-mark-right font-semibold')} aria-hidden='true'>
             {quizPassed ? '✓' : quizLocked ? '🔒' : '📝'}
           </span>
-          <span className='min-w-0 flex-1'>{course.quiz.title || 'Final quiz'}</span>
+          <span className='min-w-0 flex-1'>{course.quiz.title || words('final_quiz')}</span>
           <span className='sr-only'>
             {quizPassed
               ? ' (passed)'
@@ -462,7 +539,7 @@ function Outline({
           <svg width='14' height='14' viewBox='0 0 16 16' fill='none' aria-hidden='true' focusable='false'>
             <path d='M2.5 4h11M2.5 8h11M2.5 12h11' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' />
           </svg>
-          <span className='min-w-0 flex-1 truncate'>Lessons</span>
+          <span className='min-w-0 flex-1 truncate'>{words('lessons')}</span>
           <span className='text-xs text-text-tertiary'>
             {doneCount}/{lessonTotal} · {percent}%
           </span>
@@ -517,6 +594,29 @@ function splitAtGate(lesson: Lesson, done: Set<string>) {
   return { visible, gate: null, gateIndex: -1 };
 }
 
+/** A lesson's header picture: across the top, about 180 px tall, cropped to fit. Learners see nothing if it won't load. */
+function LessonHeader({ link, alt, preview }: { link: string; alt: string; preview: boolean }) {
+  const ok = urlAllowed(link);
+  const file = useFileSrc(ok ? link : '');
+
+  if (!ok || file.state === 'failed') {
+    return preview ? (
+      <div className='mb-4'>
+        <ChNote>
+          {ok ? 'We couldn’t load the header picture.' : 'The header picture needs a link that starts with https://.'}
+        </ChNote>
+      </div>
+    ) : null;
+  }
+  return (
+    <div className='mb-5 h-[180px] overflow-hidden rounded-[12px] bg-fill-content-hover'>
+      {file.state === 'ready' && file.src && (
+        <img src={file.src} alt={alt} className='h-full w-full object-cover' onError={file.fail} />
+      )}
+    </div>
+  );
+}
+
 function LessonView({
   course,
   lesson,
@@ -525,6 +625,7 @@ function LessonView({
   isDone,
   onGate,
   footer,
+  words,
 }: {
   course: PlayCourse;
   lesson: Lesson;
@@ -533,6 +634,7 @@ function LessonView({
   isDone: boolean;
   onGate: (gate: BlockOf<'continue'>) => void;
   footer: ReactNode;
+  words: Words;
 }) {
   const { visible, gate, gateIndex } = splitAtGate(lesson, ctx.done);
   const waitingOn =
@@ -550,11 +652,17 @@ function LessonView({
 
   return (
     <article>
+      {lesson.header_image?.trim() && (
+        <LessonHeader link={lesson.header_image} alt={lesson.header_alt || ''} preview={ctx.preview} />
+      )}
       <div className='mb-1 text-xs text-text-tertiary'>
         {lessonPlace(course.lessons, index)}
         {isDone ? ' · Done ✓' : ''}
       </div>
-      <h1 className='mb-5 text-2xl font-semibold leading-tight'>{lesson.title.trim() || `Lesson ${index + 1}`}</h1>
+      <h1 className='mb-5 text-2xl font-semibold leading-tight'>
+        <LessonIcon icon={lesson.icon} />
+        {lesson.title.trim() || `Lesson ${index + 1}`}
+      </h1>
       <div className='flex flex-col gap-5'>
         {visible.map((b) =>
           b.type === 'continue' ? (
@@ -570,7 +678,7 @@ function LessonView({
       {gate ? (
         <div id={`chl-gate-${gate.id}`} className='mt-6 flex flex-col items-start gap-1.5'>
           <Button type='button' size='lg' disabled={waitingOn.length > 0} onClick={() => onGate(gate)}>
-            {gate.label.trim() || 'Continue'} ↓
+            {gate.label.trim() || words('continue')} ↓
           </Button>
           {waitingOn.length > 0 && (
             <div className='text-xs text-text-tertiary'>
@@ -596,6 +704,7 @@ function LessonFooter({
   busy,
   nextLabel,
   waitLabel,
+  prevLabel,
   onComplete,
   onNext,
   onPrev,
@@ -609,6 +718,7 @@ function LessonFooter({
   busy: boolean;
   nextLabel: string;
   waitLabel: string;
+  prevLabel: string;
   onComplete: () => void;
   onNext: () => void;
   onPrev: (() => void) | null;
@@ -633,7 +743,7 @@ function LessonFooter({
       <div className='flex flex-wrap items-center gap-2'>
         {onPrev && (
           <Button type='button' variant='ghost' onClick={onPrev}>
-            ← Previous
+            ← {prevLabel}
           </Button>
         )}
         <div className='flex-1' />
@@ -675,6 +785,7 @@ function QuizView({
   onRetry,
   onContinue,
   onLessons,
+  words,
 }: {
   course: PlayCourse;
   questions: Question[];
@@ -687,17 +798,18 @@ function QuizView({
   onRetry: () => void;
   onContinue: () => void;
   onLessons: () => void;
+  words: Words;
 }) {
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const [result, setResult] = useState<QuizResponse | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const title = course.quiz.title || 'Final quiz';
+  const title = course.quiz.title || words('final_quiz');
   const unanswered = questions.filter((q) => !isAnswered(q, answers[q.id])).length;
 
   const header = (
     <>
-      <div className='mb-1 text-xs text-text-tertiary'>Final quiz</div>
+      <div className='mb-1 text-xs text-text-tertiary'>{words('final_quiz')}</div>
       <h1 className='text-2xl font-semibold leading-tight'>{title}</h1>
     </>
   );
@@ -721,7 +833,7 @@ function QuizView({
             </Button>
           ) : (
             <Button type='button' onClick={onContinue}>
-              Continue
+              {words('continue')}
             </Button>
           )}
         </div>
@@ -835,7 +947,7 @@ function QuizView({
         {!result ? (
           <>
             <Button type='button' size='lg' disabled={unanswered > 0} loading={sending} onClick={() => void submit()} data-testid='carehub-learning-submit-quiz'>
-              Submit answers
+              {words('submit')}
             </Button>
             {unanswered > 0 && (
               <span className='text-xs text-text-tertiary'>
@@ -845,15 +957,15 @@ function QuizView({
           </>
         ) : result.passed || result.attempts_left === 0 ? (
           <Button type='button' size='lg' onClick={onContinue}>
-            {result.passed ? 'Continue' : 'See your results'}
+            {result.passed ? words('continue') : 'See your results'}
           </Button>
         ) : (
           <>
             <Button type='button' size='lg' loading={busy} onClick={onRetry}>
-              Try again
+              {words('try_again')}
             </Button>
             <Button type='button' variant='ghost' onClick={onLessons}>
-              Review the lessons
+              {words('review', 'Review the lessons')}
             </Button>
           </>
         )}
@@ -881,6 +993,7 @@ function DoneView({
   onNext,
   onQuiz,
   preview,
+  words,
 }: {
   course: PlayCourse;
   status: LearnStatus;
@@ -900,6 +1013,7 @@ function DoneView({
   onNext: () => void;
   onQuiz: () => void;
   preview: boolean;
+  words: Words;
 }) {
   const navigate = useNavigate();
   const [ticked, setTicked] = useState(false);
@@ -936,7 +1050,7 @@ function DoneView({
   );
   const exit = onExit && (
     <Button type='button' variant='outline' onClick={onExit}>
-      {exitLabel || 'Back to My learning'}
+      {exitLabel || words('back')}
     </Button>
   );
 
@@ -954,10 +1068,10 @@ function DoneView({
         </label>
         <div className='mt-4 flex flex-wrap gap-2'>
           <Button type='button' size='lg' disabled={!ticked} loading={busy} onClick={onAck} data-testid='carehub-learning-ack'>
-            Confirm and finish
+            {words('confirm')}
           </Button>
           <Button type='button' variant='ghost' onClick={onReview}>
-            Review lessons
+            {words('review')}
           </Button>
         </div>
       </div>
@@ -977,11 +1091,11 @@ function DoneView({
         <div className='mt-5 flex flex-wrap justify-center gap-2'>
           {exit}
           <Button type='button' variant='ghost' onClick={onReview}>
-            Review lessons
+            {words('review')}
           </Button>
           {quizOptional && (
             <Button type='button' variant='ghost' onClick={onQuiz}>
-              Try the quiz
+              {words('take_quiz', 'Try the quiz')}
             </Button>
           )}
         </div>
@@ -1003,7 +1117,7 @@ function DoneView({
         <div className='mt-5 flex flex-wrap justify-center gap-2'>
           {exit}
           <Button type='button' variant='ghost' onClick={onReview}>
-            Review lessons
+            {words('review')}
           </Button>
         </div>
       </div>
@@ -1025,12 +1139,12 @@ function DoneView({
       <div className='mt-4 flex flex-wrap gap-2'>
         {lessonsLeft > 0 && (
           <Button type='button' onClick={onNext}>
-            Continue
+            {words('continue')}
           </Button>
         )}
         {lessonsLeft === 0 && quizNeeded && (
           <Button type='button' onClick={onQuiz}>
-            Take the final quiz
+            {words('take_quiz')}
           </Button>
         )}
         {exit}
@@ -1055,6 +1169,8 @@ interface ShellProps extends PlayerProps {
   initialCourse: PlayCourse;
   initialEnrollment: Enrollment | null;
   onRestart?: () => void;
+  /** Loads the course again (after "Take it again"). */
+  onReload?: () => void;
 }
 
 interface Tracker {
@@ -1083,6 +1199,7 @@ function PlayerShell({
   initialCourse,
   initialEnrollment,
   onRestart,
+  onReload,
 }: ShellProps) {
   const isPreview = Boolean(preview);
   const [course, setCourse] = useState<PlayCourse>(initialCourse);
@@ -1103,6 +1220,10 @@ function PlayerShell({
   const [offline, setOffline] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  // Lesson list "Closed": on wide screens it starts closed and the Lessons button in the top bar opens it.
+  const [sideOpen, setSideOpen] = useState(() => sidebarOf(initialCourse.settings) !== 'closed');
+  const [textSize, setTextSize] = useTextSize();
+  const listId = useId();
   const [quizRound, setQuizRound] = useState(0);
   const [quizPassedHere, setQuizPassedHere] = useState(false);
   const [quizMeta, setQuizMeta] = useState<{ used: number; left: number | null }>(() => ({
@@ -1771,6 +1892,22 @@ function PlayerShell({
   const currentIndex = view.kind === 'lesson' ? lessons.findIndex((l) => l.id === view.lessonId) : -1;
   const currentLesson = currentIndex >= 0 ? lessons[currentIndex] : undefined;
   const showIntro = view.kind === 'intro' || !enr;
+  const words = useMemo(() => wordsOf(course.settings), [course.settings]);
+  const sidebar = sidebarOf(course.settings);
+  const showList = sidebar !== 'hidden' && (narrow || sidebar === 'open' || sideOpen);
+  const zoom = textZoom(textSize);
+  const topBack = course.settings.labels?.back?.trim() ? `← ${words('back')}` : '← My learning';
+  // A finish that has run out: say so at the top, with "Take it again" (starts the course over, then loads it again).
+  const expiredOn = enr?.expires_ms ? ` on ${shortDate(enr.expires_ms)}` : '';
+  const expiredNote =
+    !isPreview && enr?.expired
+      ? `${course.settings.certificate ? 'Your certificate expired' : 'You finished this before, and it ran out'}${expiredOn}. Take the course again to renew it.`
+      : '';
+  const retake = async () => {
+    await flush();
+    await lapi.retake(workspaceId, courseId);
+    onReload?.();
+  };
   const localTime = Object.values(tr.current.totals).reduce((a, b) => a + b, 0);
 
   const lessonFooter = (lesson: Lesson, index: number) => {
@@ -1785,8 +1922,18 @@ function PlayerShell({
         : !branching && isDone && lessons[index + 1]
           ? ({ kind: 'lesson', lessonId: lessons[index + 1].id } as View)
           : nextAfter(lesson.id, done);
-    const nextLabel = target.kind === 'lesson' ? 'Next lesson →' : target.kind === 'quiz' ? 'Go to the quiz →' : 'Finish course ✓';
-    const waitLabel = target.kind === 'lesson' ? 'Next lesson' : target.kind === 'quiz' ? 'Quiz' : 'Finish';
+    const nextLabel =
+      target.kind === 'lesson'
+        ? `${words('next')} →`
+        : target.kind === 'quiz'
+          ? `${words('to_quiz')} →`
+          : `${words('finish')} ✓`;
+    const waitLabel =
+      target.kind === 'lesson'
+        ? words('next')
+        : target.kind === 'quiz'
+          ? words('to_quiz', 'Quiz')
+          : words('finish', 'Finish');
     const prevIndex = branching ? branchPrev(lessons, index, cameFrom[lesson.id]) : index - 1;
     const prev = prevIndex >= 0 ? lessons[prevIndex] : undefined;
 
@@ -1799,6 +1946,7 @@ function PlayerShell({
         busy={busy}
         nextLabel={nextLabel}
         waitLabel={waitLabel}
+        prevLabel={words('previous')}
         onComplete={() => void completeLesson(lesson)}
         onNext={() => openView(target)}
         onPrev={prev && (isPreview || !isLocked(prevIndex)) ? () => openView({ kind: 'lesson', lessonId: prev.id }) : null}
@@ -1846,18 +1994,47 @@ function PlayerShell({
             )}
           </div>
         )}
-        {(onExit || !showIntro) && (
-          <div className='mb-4 flex min-w-0 flex-wrap items-center gap-2'>
-            {onExit && (
-              <Button type='button' variant='ghost' size='sm' onClick={onExit}>
-                {exitLabel || '← My learning'}
-              </Button>
-            )}
-            <div className='min-w-0 flex-1 truncate text-sm text-text-secondary'>{showIntro ? '' : course.title.trim() || 'Untitled course'}</div>
-            {!showIntro && <Chip tone={chip.tone}>{chip.label}</Chip>}
-            {!showIntro && view.kind !== 'quiz' && (
-              <CourseSearch lessons={searchLessons} shownBlocks={(l) => splitAtGate(l, doneBlocks).visible} />
-            )}
+        <div className='mb-4 flex min-w-0 flex-wrap items-center gap-2'>
+          {onExit && (
+            <Button type='button' variant='ghost' size='sm' onClick={onExit}>
+              {exitLabel || topBack}
+            </Button>
+          )}
+          {!showIntro && !narrow && sidebar === 'closed' && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              aria-expanded={sideOpen}
+              aria-controls={sideOpen ? listId : undefined}
+              onClick={() => setSideOpen((o) => !o)}
+              data-testid='carehub-learning-lessons-toggle'
+            >
+              <svg width='14' height='14' viewBox='0 0 16 16' fill='none' aria-hidden='true' focusable='false'>
+                <path d='M2.5 4h11M2.5 8h11M2.5 12h11' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' />
+              </svg>
+              {words('lessons')}
+            </Button>
+          )}
+          <div className='min-w-0 flex-1 truncate text-sm text-text-secondary'>
+            {showIntro ? '' : course.title.trim() || 'Untitled course'}
+          </div>
+          {!showIntro && <Chip tone={chip.tone}>{chip.label}</Chip>}
+          {!showIntro && view.kind !== 'quiz' && (
+            <CourseSearch lessons={searchLessons} shownBlocks={(l) => splitAtGate(l, doneBlocks).visible} />
+          )}
+          <TextSizeControl value={textSize} onChange={setTextSize} />
+        </div>
+        {expiredNote && (
+          <div className='mb-4'>
+            <TakeAgain title={course.title.trim() || 'Untitled course'} onRetake={retake} place='right-2 top-2'>
+              <div
+                className='chl-box-warning rounded-[10px] py-2.5 pl-3 pr-[124px] text-sm'
+                data-testid='carehub-learning-expired'
+              >
+                {expiredNote}
+              </div>
+            </TakeAgain>
           </div>
         )}
         {notice && (
@@ -1866,27 +2043,31 @@ function PlayerShell({
           </div>
         )}
         {showIntro ? (
-          <Intro course={course} onStart={() => void start()} busy={busy} narrow={narrow} />
+          <Intro course={course} onStart={() => void start()} busy={busy} narrow={narrow} words={words} style={zoom} />
         ) : (
           <div className={cn('flex', narrow ? 'flex-col gap-4' : 'items-start gap-8')}>
-            <Outline
-              course={course}
-              view={view}
-              narrow={narrow}
-              open={outlineOpen}
-              setOpen={setOutlineOpen}
-              isDone={(id) => doneIds.has(id)}
-              isLocked={isLocked}
-              preview={isPreview}
-              onOpen={openView}
-              doneCount={doneCount}
-              percent={percent}
-              quizPassed={quizPassed}
-              quizLocked={quizLessonsLock}
-              rows={shown}
-              lessonTotal={lessonTotal}
-            />
-            <div className='min-w-0 flex-1'>
+            {showList && (
+              <Outline
+                course={course}
+                view={view}
+                narrow={narrow}
+                open={outlineOpen}
+                setOpen={setOutlineOpen}
+                isDone={(id) => doneIds.has(id)}
+                isLocked={isLocked}
+                preview={isPreview}
+                onOpen={openView}
+                doneCount={doneCount}
+                percent={percent}
+                quizPassed={quizPassed}
+                quizLocked={quizLessonsLock}
+                rows={shown}
+                lessonTotal={lessonTotal}
+                words={words}
+                listId={listId}
+              />
+            )}
+            <div className='min-w-0 flex-1' style={zoom}>
               {view.kind === 'lesson' &&
                 (currentLesson ? (
                   <LessonView
@@ -1898,6 +2079,7 @@ function PlayerShell({
                     isDone={doneIds.has(currentLesson.id)}
                     onGate={passGate}
                     footer={lessonFooter(currentLesson, currentIndex)}
+                    words={words}
                   />
                 ) : (
                   <div className='flex flex-col items-start gap-3'>
@@ -1921,6 +2103,7 @@ function PlayerShell({
                   onRetry={() => void retryQuiz()}
                   onContinue={() => openView(afterQuiz())}
                   onLessons={() => openView(firstLessonView())}
+                  words={words}
                 />
               )}
               {view.kind === 'done' && (
@@ -1943,6 +2126,7 @@ function PlayerShell({
                   onNext={() => openView(nextAfter(null, doneIds))}
                   onQuiz={() => openView({ kind: 'quiz' })}
                   preview={isPreview}
+                  words={words}
                 />
               )}
             </div>
@@ -2032,5 +2216,13 @@ export function CareHubLearningPlayer(props: PlayerProps) {
 
   if (!data) return <div className='text-sm text-text-tertiary'>Loading…</div>;
 
-  return <PlayerShell key={`${courseId}-${attempt}`} {...props} initialCourse={data.course} initialEnrollment={data.enrollment} />;
+  return (
+    <PlayerShell
+      key={`${courseId}-${attempt}`}
+      {...props}
+      initialCourse={data.course}
+      initialEnrollment={data.enrollment}
+      onReload={() => setAttempt((n) => n + 1)}
+    />
+  );
 }

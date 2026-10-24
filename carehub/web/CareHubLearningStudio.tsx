@@ -44,6 +44,7 @@ import { EXAMPLES } from './CareHubLearningExample';
 import { describeChange, HistoryButtons, HistoryStatus, historyKey, useCourseHistory, useLanding } from './CareHubLearningHistory';
 import { ImportQuestionsDialog } from './CareHubLearningImport';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
+import { CourseLookSettings, CoverLayoutField, LessonIcon, LessonLookEditor } from './CareHubLearningLook';
 import { PasteTextDialog } from './CareHubLearningPaste';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import { drawnCount, QuestionBanksPage, QuizDrawsEditor, useBankCopies, withDraws } from './CareHubLearningQbank';
@@ -1867,6 +1868,7 @@ function Editor({
             />
           </Field>
         </div>
+        <LessonLookEditor lesson={lesson} media={MediaField} update={(fn) => setLesson(lesson.id, fn)} />
         <LessonBranchSettings lesson={lesson} lessons={lessons} onChange={(p) => setLesson(lesson.id, (l) => withBranchFields(l, p))} />
         <div ref={blockDrag.setList} className='flex flex-col gap-3'>
           {lesson.blocks.length === 0 ? (
@@ -2083,6 +2085,7 @@ function Editor({
                 )}
               </div>
             </div>
+            <CoverLayoutField value={s.cover_layout} onChange={(v) => setSettings({ cover_layout: v })} />
             {est > 0 && <div className='text-xs text-text-tertiary'>Takes about {formatMinutes(est)} (worked out from the lessons).</div>}
           </div>
         </ChSection>
@@ -2178,6 +2181,7 @@ function Editor({
             </div>
           </div>
         </ChSection>
+        <CourseLookSettings settings={s} onChange={setSettings} loadCatalog={() => lapi.catalog(workspaceId)} />
       </div>
     );
   };
@@ -2254,6 +2258,7 @@ function Editor({
               data-testid='carehub-learning-outline-lesson'
             >
               <span className='w-5 shrink-0 text-xs font-normal text-text-tertiary'>{i + 1}.</span>
+              <LessonIcon icon={l.icon} className='mr-0 shrink-0' />
               <span className={cn('min-w-0 flex-1 truncate', !l.title.trim() && 'italic text-text-tertiary')}>
                 {l.title.trim() || 'Untitled lesson'}
                 {isSide(l) && <SideLessonNote />}
