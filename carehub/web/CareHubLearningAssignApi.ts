@@ -16,12 +16,19 @@ export const assignCoursePath = (courseId: string) => `${ASSIGN_PATH}/course/${e
 export const assignmentPath = (id: string) => `${ASSIGN_PATH}/assignment/${encodeURIComponent(id)}`;
 export const groupPath = (id: string) => `${GROUPS_PATH}/${encodeURIComponent(id)}`;
 export const certificatePath = (code: string) => `${LEARNING_PATH}/certificate/${encodeURIComponent(code)}`;
+export const PATHS_PATH = `${ASSIGN_PATH}/paths`;
+export const pathPath = (id: string) => `${PATHS_PATH}/${encodeURIComponent(id)}`;
 
 /** Limits the server checks too (P2-API). */
 export const MAX_TARGETS = 200;
 export const MAX_NOTE = 500;
 export const MAX_GROUP_NAME = 80;
 export const MAX_GROUP_DESCRIPTION = 500;
+export const MAX_DUE_DAYS = 365;
+export const MAX_PATH_TITLE = 80;
+export const MAX_PATH_DESCRIPTION = 500;
+export const MIN_PATH_COURSES = 2;
+export const MAX_PATH_COURSES = 20;
 
 /** Ids in links (assignment, group). Course ids are checked with UUID_RE. */
 export const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -81,6 +88,8 @@ export interface Assignment extends Counts {
   course_title: string;
   target: NamedTarget;
   due_ms: number | null;
+  /** Due this many days after each person is added (instead of a date). */
+  due_days: number | null;
   tz_minutes: number | null;
   required: boolean;
   note: string;
@@ -88,6 +97,9 @@ export interface Assignment extends Counts {
   created_ms: number;
   created_by_name: string;
   updated_ms: number;
+  /** Set when this assignment comes from a learning path (change it on the Paths tab). */
+  path_id: string | null;
+  path_title: string | null;
 }
 
 export type AssigneeStatus = 'not_started' | LearnStatus;
@@ -102,6 +114,9 @@ export interface Assignee {
   overdue: boolean;
   assigned_ms: number;
   completed_ms: number | null;
+  /** When their finish runs out; null = never. */
+  expires_ms: number | null;
+  expired: boolean;
 }
 
 export type AssignCourseStatus = 'published' | 'archived' | 'draft';
@@ -127,6 +142,12 @@ export interface AssignmentInfo {
   overdue: boolean;
   assigned_ms: number;
   note: string;
+  /** Their due comes from a renewal (they finished it before and it ran out). */
+  renewal: boolean;
+  /** Learning paths this course reaches them through. */
+  paths: string[];
+  /** Also assigned to them outside a path. */
+  direct: boolean;
 }
 
 export interface AssignedCourse extends CourseCard {
@@ -141,13 +162,21 @@ export interface Certificate {
   score: number | null;
   issued_ms: number;
   version: number;
+  /** When the finish behind it runs out (the course needs renewing); null = never. */
+  expires_ms: number | null;
+  expired: boolean;
 }
 
-export interface AssignBody {
+/** What to send for a due choice: a date (due_ms), a number of days after each person is added (due_days), or neither. */
+export interface DueBody {
+  due_ms: number | null;
+  due_days: number | null;
+  tz_minutes: number;
+}
+
+export interface AssignBody extends DueBody {
   course_id: string;
   targets: Target[];
-  due_ms: number | null;
-  tz_minutes: number;
   required: boolean;
   note?: string;
   calendar?: boolean;
@@ -155,11 +184,124 @@ export interface AssignBody {
 }
 
 export interface AssignmentChanges {
+  /** Send due_ms or due_days to replace the due choice (the other one becomes empty). */
   due_ms?: number | null;
+  due_days?: number | null;
   tz_minutes?: number;
   required?: boolean;
   note?: string;
   calendar?: boolean;
+}
+
+export type PathStatus = 'not_started' | 'in_progress' | 'finished';
+
+/** A learning path: courses people take one after another (or in any order). Counts are over the distinct people on it. */
+export interface LearningPath extends Counts {
+  id: string;
+  title: string;
+  description: string;
+  course_ids: string[];
+  in_order: boolean;
+  archived: boolean;
+  created_ms: number;
+  updated_ms: number;
+  created_by_name: string;
+  /** How many people, groups or roles it's assigned to. */
+  targets: number;
+}
+
+export interface PathCourse {
+  id: string;
+  title: string;
+  status: 'published' | 'archived';
+}
+
+/** Who a path is assigned to, with that assignment's settings and counts. */
+export interface PathTarget extends Counts {
+  target: NamedTarget;
+  due_ms: number | null;
+  due_days: number | null;
+  tz_minutes: number | null;
+  required: boolean;
+  note: string;
+  calendar: boolean;
+  created_ms: number;
+  updated_ms: number;
+}
+
+export interface PathStepRef {
+  course_id: string;
+  title: string;
+}
+
+export interface PathPerson {
+  uid: string;
+  name: string;
+  email: string;
+  status: PathStatus;
+  percent: number;
+  finished_courses: number;
+  total_courses: number;
+  next: PathStepRef | null;
+  due_ms: number | null;
+  overdue: boolean;
+  assigned_ms: number;
+}
+
+export interface PathDetail {
+  path: LearningPath;
+  courses: PathCourse[];
+  targets: PathTarget[];
+  people: PathPerson[];
+}
+
+export interface MyPathStep extends PathStepRef {
+  status: AssigneeStatus;
+  percent: number;
+  /** "Take them in this order": opens after the step before it is finished. */
+  locked: boolean;
+}
+
+/** A path on My learning. */
+export interface MyPath {
+  id: string;
+  title: string;
+  description: string;
+  in_order: boolean;
+  status: PathStatus;
+  percent: number;
+  finished_courses: number;
+  total_courses: number;
+  due_ms: number | null;
+  overdue: boolean;
+  required: boolean;
+  note: string;
+  assigned_ms: number;
+  next: PathStepRef | null;
+  steps: MyPathStep[];
+}
+
+export interface PathBody {
+  title: string;
+  description?: string;
+  course_ids: string[];
+  in_order?: boolean;
+}
+
+export interface PathChanges {
+  title?: string;
+  description?: string;
+  course_ids?: string[];
+  in_order?: boolean;
+  archived?: boolean;
+}
+
+export interface PathAssignBody extends DueBody {
+  targets: Target[];
+  required: boolean;
+  note?: string;
+  calendar?: boolean;
+  notify?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +330,10 @@ function numOrNull(v: unknown) {
 
 function count(v: unknown) {
   return Math.max(0, Math.round(num(v)));
+}
+
+function daysOrNull(v: unknown) {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 ? v : null;
 }
 
 /** Person ids are 64-bit numbers, so they travel as text. */
@@ -244,6 +390,7 @@ function assignmentOf(raw: unknown): Assignment {
     course_title: str(o.course_title) || 'Untitled course',
     target: targetOf(o.target),
     due_ms: numOrNull(o.due_ms),
+    due_days: daysOrNull(o.due_days),
     tz_minutes: numOrNull(o.tz_minutes),
     required: bool(o.required, true),
     note: str(o.note),
@@ -256,6 +403,8 @@ function assignmentOf(raw: unknown): Assignment {
     created_ms: num(o.created_ms),
     created_by_name: str(o.created_by_name),
     updated_ms: num(o.updated_ms),
+    path_id: str(o.path_id) || null,
+    path_title: o.path_id ? str(o.path_title).trim() || 'Untitled path' : null,
   };
 }
 
@@ -272,6 +421,8 @@ function assigneeOf(raw: unknown): Assignee {
     overdue: bool(o.overdue),
     assigned_ms: num(o.assigned_ms),
     completed_ms: numOrNull(o.completed_ms),
+    expires_ms: numOrNull(o.expires_ms),
+    expired: bool(o.expired),
   };
 }
 
@@ -308,6 +459,8 @@ function myOf(raw: unknown): MyProgress | null {
     ack_ms: numOrNull(o.ack_ms),
     awaiting_ack: bool(o.awaiting_ack),
     version: num(o.version, 1),
+    expires_ms: numOrNull(o.expires_ms),
+    expired: bool(o.expired),
   };
 }
 
@@ -334,6 +487,12 @@ function assignedOf(raw: unknown): AssignedCourse {
       overdue: bool(a.overdue),
       assigned_ms: num(a.assigned_ms),
       note: str(a.note),
+      renewal: bool(a.renewal),
+      paths: arr(a.paths)
+        .map((x) => str(x))
+        .filter(Boolean),
+      // Older servers don't say, and every assignment was direct then.
+      direct: bool(a.direct, true),
     },
   };
 }
@@ -349,6 +508,130 @@ function certificateOf(raw: unknown): Certificate {
     score: numOrNull(o.score),
     issued_ms: num(o.issued_ms),
     version: num(o.version, 1),
+    expires_ms: numOrNull(o.expires_ms),
+    expired: bool(o.expired),
+  };
+}
+
+const PATH_STATUSES: readonly PathStatus[] = ['not_started', 'in_progress', 'finished'];
+
+function countsOf(o: Record<string, unknown>): Counts {
+  return {
+    people: count(o.people),
+    finished: count(o.finished),
+    in_progress: count(o.in_progress),
+    not_started: count(o.not_started),
+    overdue: count(o.overdue),
+  };
+}
+
+function pathOf(raw: unknown): LearningPath {
+  const o = obj(raw);
+
+  return {
+    id: str(o.id),
+    title: str(o.title).trim() || 'Untitled path',
+    description: str(o.description),
+    course_ids: Array.from(
+      new Set(
+        arr(o.course_ids)
+          .map((x) => str(x))
+          .filter(Boolean)
+      )
+    ),
+    in_order: bool(o.in_order, true),
+    archived: bool(o.archived),
+    created_ms: num(o.created_ms),
+    updated_ms: num(o.updated_ms),
+    created_by_name: str(o.created_by_name),
+    targets: count(o.targets),
+    ...countsOf(o),
+  };
+}
+
+function pathCourseOf(raw: unknown): PathCourse {
+  const o = obj(raw);
+
+  return { id: str(o.id), title: str(o.title) || 'Untitled course', status: o.status === 'archived' ? 'archived' : 'published' };
+}
+
+function pathTargetOf(raw: unknown): PathTarget {
+  const o = obj(raw);
+
+  return {
+    target: targetOf(o.target),
+    due_ms: numOrNull(o.due_ms),
+    due_days: daysOrNull(o.due_days),
+    tz_minutes: numOrNull(o.tz_minutes),
+    required: bool(o.required, true),
+    note: str(o.note),
+    calendar: bool(o.calendar),
+    created_ms: num(o.created_ms),
+    updated_ms: num(o.updated_ms),
+    ...countsOf(o),
+  };
+}
+
+function stepRefOf(raw: unknown): PathStepRef | null {
+  const o = obj(raw);
+  const id = str(o.course_id);
+
+  return id ? { course_id: id, title: str(o.title) || 'Untitled course' } : null;
+}
+
+function pathPersonOf(raw: unknown): PathPerson {
+  const o = obj(raw);
+
+  return {
+    uid: uidOf(o.uid),
+    name: str(o.name).trim(),
+    email: str(o.email).trim(),
+    status: oneOf(o.status, PATH_STATUSES, 'not_started'),
+    percent: clampInt(num(o.percent), 0, 100),
+    finished_courses: count(o.finished_courses),
+    total_courses: count(o.total_courses),
+    next: stepRefOf(o.next),
+    due_ms: numOrNull(o.due_ms),
+    overdue: bool(o.overdue),
+    assigned_ms: num(o.assigned_ms),
+  };
+}
+
+function myStepOf(raw: unknown): MyPathStep | null {
+  const o = obj(raw);
+  const ref = stepRefOf(raw);
+
+  if (!ref) return null;
+  return {
+    ...ref,
+    status: o.status === 'not_started' ? 'not_started' : oneOf(o.status, LEARN_STATUSES, 'in_progress'),
+    percent: clampInt(num(o.percent), 0, 100),
+    locked: bool(o.locked),
+  };
+}
+
+function myPathOf(raw: unknown): MyPath {
+  const o = obj(raw);
+  const steps = arr(o.steps)
+    .map(myStepOf)
+    .filter((x): x is MyPathStep => x !== null);
+
+  return {
+    id: str(o.id),
+    title: str(o.title).trim() || 'Untitled path',
+    description: str(o.description),
+    in_order: bool(o.in_order, true),
+    status: oneOf(o.status, PATH_STATUSES, 'not_started'),
+    percent: clampInt(num(o.percent), 0, 100),
+    finished_courses: count(o.finished_courses),
+    total_courses: typeof o.total_courses === 'number' ? count(o.total_courses) : steps.length,
+    due_ms: numOrNull(o.due_ms),
+    overdue: bool(o.overdue),
+    required: bool(o.required, true),
+    note: str(o.note),
+    assigned_ms: num(o.assigned_ms),
+    next: stepRefOf(o.next),
+    steps,
   };
 }
 
@@ -443,9 +726,58 @@ export const aapi = {
       if (!c.code) throw new Error(CERT_NOT_FOUND);
       return c;
     }),
+
+  paths: (ws: string) =>
+    chCall<unknown>('get', `${base(ws)}/paths`).then((d) =>
+      arr(obj(d).paths)
+        .map(pathOf)
+        .filter((p) => p.id)
+    ),
+  path: (ws: string, id: string) =>
+    chCall<unknown>('get', `${base(ws)}/paths/${enc(id)}`).then((d): PathDetail => {
+      const o = obj(d);
+      const path = pathOf(o.path);
+
+      if (!path.id) throw new Error(PATH_NOT_FOUND);
+      return {
+        path,
+        courses: arr(o.courses)
+          .map(pathCourseOf)
+          .filter((c) => c.id),
+        targets: arr(o.targets).map(pathTargetOf),
+        people: arr(o.people)
+          .map(pathPersonOf)
+          .filter((p) => p.uid),
+      };
+    }),
+  createPath: (ws: string, body: PathBody) => chCall<unknown>('post', `${base(ws)}/paths`, body).then((d) => str(obj(d).id)),
+  updatePath: (ws: string, id: string, changes: PathChanges) =>
+    chCall<unknown>('put', `${base(ws)}/paths/${enc(id)}`, changes).then((d) => {
+      const o = obj(d);
+
+      return { added: count(o.added), removed: count(o.removed), assignments_removed: count(o.assignments_removed) };
+    }),
+  deletePath: (ws: string, id: string) =>
+    chCall<unknown>('delete', `${base(ws)}/paths/${enc(id)}`).then((d) => ({ assignments_removed: count(obj(d).assignments_removed) })),
+  /** The same target again updates its settings. */
+  assignPath: (ws: string, id: string, body: PathAssignBody) =>
+    chCall<unknown>('post', `${base(ws)}/paths/${enc(id)}/assign`, body).then((d) => {
+      const o = obj(d);
+
+      return { created: count(o.created), updated: count(o.updated), people: count(o.people) };
+    }),
+  unassignPath: (ws: string, id: string, targets: Target[]) =>
+    chCall<unknown>('post', `${base(ws)}/paths/${enc(id)}/unassign`, { targets }).then((d) => ({ removed: count(obj(d).removed) })),
+  myPaths: (ws: string) =>
+    chCall<unknown>('get', `${base(ws)}/paths/mine`).then((d) =>
+      arr(obj(d).paths)
+        .map(myPathOf)
+        .filter((p) => p.id && p.steps.length)
+    ),
 };
 
 export const CERT_NOT_FOUND = 'We couldn’t find a certificate with that code.';
+export const PATH_NOT_FOUND = 'That learning path couldn’t be found. It may have been deleted.';
 
 // ---------------------------------------------------------------------------
 // The Assign tab's course list (with a fallback for servers that don't send `courses` yet)
@@ -676,6 +1008,80 @@ export function dueFields(value: string): { due_ms: number | null; tz_minutes: n
   if (due === null) return 'invalid';
   if (due <= Date.now()) return 'past';
   return { due_ms: due, tz_minutes: tzMinutesEast() };
+}
+
+// ---------------------------------------------------------------------------
+// Due choice: no due date, a date, or a number of days after each person is added
+// ---------------------------------------------------------------------------
+
+export type DueMode = 'none' | 'date' | 'days';
+
+/** What the due picker shows: the mode plus the raw date ("2026-10-30") and days ("14") text. */
+export interface DueChoice {
+  mode: DueMode;
+  date: string;
+  days: string;
+}
+
+export const DAYS_NEEDED = 'Pick a number of days between 1 and 365.';
+
+/** "Due 14 days after they’re added". */
+export function dueDaysText(days: number) {
+  return `Due ${days} ${days === 1 ? 'day' : 'days'} after they’re added`;
+}
+
+/** The due part of an assignment in a list: "Due Fri 30 Oct", "Due 14 days after they’re added" or "No due date". */
+export function dueSummary(a: { due_ms: number | null; due_days?: number | null; tz_minutes?: number | null }, now = Date.now()) {
+  if (a.due_days) return dueDaysText(a.due_days);
+  if (a.due_ms !== null) return dueText(a.due_ms, a.tz_minutes, now);
+  return 'No due date';
+}
+
+/** The picker's starting point for an existing assignment (or a blank one). */
+export function dueChoiceOf(a?: { due_ms: number | null; due_days?: number | null; tz_minutes?: number | null } | null): DueChoice {
+  if (a?.due_days) return { mode: 'days', date: '', days: String(a.due_days) };
+  if (a && a.due_ms !== null) return { mode: 'date', date: dateInputValue(a.due_ms, a.tz_minutes), days: '' };
+  return { mode: 'none', date: '', days: '' };
+}
+
+/** A whole number of days 1-365 from what was typed, or null. */
+export function daysValue(raw: string): number | null {
+  const t = raw.trim();
+
+  if (!/^\d{1,3}$/.test(t)) return null;
+  const n = Number(t);
+
+  return n >= 1 && n <= MAX_DUE_DAYS ? n : null;
+}
+
+/** What to send for a due choice, or the message to show when it isn't right yet. */
+export function dueBody(c: DueChoice): DueBody | string {
+  const tz_minutes = tzMinutesEast();
+
+  if (c.mode === 'days') {
+    const days = daysValue(c.days);
+
+    return days === null ? DAYS_NEEDED : { due_ms: null, due_days: days, tz_minutes };
+  }
+
+  if (c.mode === 'date') {
+    if (!c.date.trim()) return 'Pick a due date, or choose “No due date”.';
+    const due = dueFields(c.date);
+
+    if (due === 'invalid') return 'That due date doesn’t look right.';
+    if (due === 'past') return 'Pick a due date in the future.';
+    return { due_ms: due.due_ms, due_days: null, tz_minutes };
+  }
+
+  return { due_ms: null, due_days: null, tz_minutes };
+}
+
+/** True when two choices mean the same due (ignores text left behind in the mode that isn't picked). */
+export function sameDue(a: DueChoice, b: DueChoice) {
+  if (a.mode !== b.mode) return false;
+  if (a.mode === 'date') return a.date.trim() === b.date.trim();
+  if (a.mode === 'days') return a.days.trim() === b.days.trim();
+  return true;
 }
 
 // ---------------------------------------------------------------------------

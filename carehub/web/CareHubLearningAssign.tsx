@@ -18,21 +18,27 @@ import {
   assignedOverdue,
   assignmentPath,
   canAssignCourse,
-  dateInputValue,
+  daysValue,
+  dueBody,
   dueChip,
-  dueFields,
+  dueChoiceOf,
+  dueSummary,
   dueText,
   GROUPS_PATH,
   groupPath,
   loadAssignOverview,
   MAX_GROUP_DESCRIPTION,
+  MAX_DUE_DAYS,
   MAX_GROUP_NAME,
   MAX_NOTE,
   MAX_TARGETS,
   matchesQuery,
+  PATHS_PATH,
+  pathPath,
   personName,
   reachCount,
   SAFE_ID_RE,
+  sameDue,
   shortDate,
   sortAssigned,
   targetKey,
@@ -52,6 +58,7 @@ import type {
   Assignee,
   Assignment,
   AssignmentChanges,
+  DueChoice,
   Group,
   Member,
   NamedTarget,
@@ -82,6 +89,8 @@ const ASSIGN_CSS = `
 :root[data-dark-mode='true'] .chl-overdue{border-color:rgba(239,68,68,.55)}
 .chl-alert{color:#b91c1c}
 :root[data-dark-mode='true'] .chl-alert{color:#fca5a5}
+.chl-warn{color:#b45309}
+:root[data-dark-mode='true'] .chl-warn{color:#fcd34d}
 `;
 
 export function AssignStyle() {
@@ -91,7 +100,12 @@ export function AssignStyle() {
 /** A message to show on the next screen (e.g. "Group deleted." after leaving the group's page). */
 let flash = '';
 
-function useFlash() {
+/** Shows `text` on the next screen that uses useFlash (e.g. after deleting something and leaving its page). */
+export function setFlash(text: string) {
+  flash = text;
+}
+
+export function useFlash() {
   const [notice, setNotice] = useState(() => flash);
 
   useEffect(() => {
@@ -136,7 +150,7 @@ export function BackLink({ label, to, testId = 'carehub-learning-assign-back' }:
   );
 }
 
-function Notice({ text, onDismiss }: { text: string; onDismiss: () => void }) {
+export function Notice({ text, onDismiss }: { text: string; onDismiss: () => void }) {
   if (!text) return null;
   return (
     <div className='mb-4 flex items-start gap-2' role='status'>
@@ -155,10 +169,11 @@ function Notice({ text, onDismiss }: { text: string; onDismiss: () => void }) {
   );
 }
 
-function AssignNav({ active }: { active: 'courses' | 'groups' }) {
+export function AssignNav({ active }: { active: 'courses' | 'paths' | 'groups' }) {
   const navigate = useNavigate();
   const items = [
     { id: 'courses' as const, label: 'Courses', to: ASSIGN_PATH },
+    { id: 'paths' as const, label: 'Paths', to: PATHS_PATH },
     { id: 'groups' as const, label: 'Groups', to: GROUPS_PATH },
   ];
 
@@ -183,7 +198,7 @@ function AssignNav({ active }: { active: 'courses' | 'groups' }) {
   );
 }
 
-function Stat({ label, n, alert }: { label: string; n: number; alert?: boolean }) {
+export function Stat({ label, n, alert }: { label: string; n: number; alert?: boolean }) {
   return (
     <span className='flex min-w-[52px] flex-col items-end'>
       <span className={cn('text-sm font-medium tabular-nums', n === 0 ? 'text-text-tertiary' : alert ? 'chl-alert' : 'text-text-primary')}>{n}</span>
@@ -192,7 +207,7 @@ function Stat({ label, n, alert }: { label: string; n: number; alert?: boolean }
   );
 }
 
-function Check({
+export function Check({
   checked,
   onChange,
   label,
@@ -225,7 +240,7 @@ function Check({
   );
 }
 
-function FieldLabel({ children, htmlFor, optional }: { children: ReactNode; htmlFor: string; optional?: boolean }) {
+export function FieldLabel({ children, htmlFor, optional }: { children: ReactNode; htmlFor: string; optional?: boolean }) {
   return (
     <label htmlFor={htmlFor} className='mb-1 block text-sm font-medium'>
       {children}
@@ -234,7 +249,7 @@ function FieldLabel({ children, htmlFor, optional }: { children: ReactNode; html
   );
 }
 
-function List({ children, testId }: { children: ReactNode; testId?: string }) {
+export function List({ children, testId }: { children: ReactNode; testId?: string }) {
   return (
     <ul className='m-0 list-none overflow-hidden rounded-[12px] border border-border-primary p-0' data-testid={testId}>
       {children}
@@ -242,7 +257,7 @@ function List({ children, testId }: { children: ReactNode; testId?: string }) {
   );
 }
 
-function rowClass(i: number) {
+export function rowClass(i: number) {
   return cn('px-3 py-2.5', i > 0 && 'border-t border-border-primary');
 }
 
@@ -277,7 +292,7 @@ export function useLoad<T>(load: () => Promise<T>) {
   return { data: mine ? state.data : null, error: mine ? state.error : null, reload };
 }
 
-function TargetIcon({ kind }: { kind: TargetKind }) {
+export function TargetIcon({ kind }: { kind: TargetKind }) {
   const icon = kind === 'group' ? '👥' : kind === 'role' ? '🏷️' : kind === 'everyone' ? '🌐' : '👤';
 
   return (
@@ -287,20 +302,20 @@ function TargetIcon({ kind }: { kind: TargetKind }) {
   );
 }
 
-function DueChips({ a }: { a: Pick<Assignment, 'due_ms' | 'tz_minutes' | 'required' | 'calendar' | 'overdue'> }) {
+export function DueChips({ a }: { a: Pick<Assignment, 'due_ms' | 'due_days' | 'tz_minutes' | 'required' | 'calendar' | 'overdue'> }) {
   return (
     <span className='flex flex-wrap items-center gap-1'>
-      <Chip title={a.due_ms !== null ? new Date(a.due_ms).toLocaleString() : undefined}>
-        {a.due_ms !== null ? dueText(a.due_ms, a.tz_minutes) : 'No due date'}
-      </Chip>
+      <Chip title={a.due_ms !== null && !a.due_days ? new Date(a.due_ms).toLocaleString() : undefined}>{dueSummary(a)}</Chip>
       <Chip tone={a.required ? 'purple' : 'gray'}>{a.required ? 'Required' : 'Optional'}</Chip>
-      {a.calendar && a.due_ms !== null && <Chip title='The due date is on their Care Hub calendars'>📅 On calendars</Chip>}
+      {a.calendar && (a.due_ms !== null || Boolean(a.due_days)) && (
+        <Chip title='The due date is on their Care Hub calendars'>📅 On calendars</Chip>
+      )}
       {a.overdue > 0 && <Chip tone='red'>{a.overdue} overdue</Chip>}
     </span>
   );
 }
 
-function progressLine(c: { people: number; finished: number; in_progress: number; not_started: number }) {
+export function progressLine(c: { people: number; finished: number; in_progress: number; not_started: number }) {
   if (!c.people) return 'No one yet';
   return `${c.finished} of ${c.people} finished · ${c.in_progress} in progress · ${c.not_started} not started`;
 }
@@ -327,7 +342,17 @@ function PersonOption({ m, checked, disabled, onToggle }: { m: Member; checked: 
   );
 }
 
-function SearchInput({ value, onChange, label, autoFocus }: { value: string; onChange: (v: string) => void; label: string; autoFocus?: boolean }) {
+export function SearchInput({
+  value,
+  onChange,
+  label,
+  autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  autoFocus?: boolean;
+}) {
   return (
     <input
       type='search'
@@ -374,7 +399,7 @@ function PeoplePicker({
   );
 }
 
-function Confirm({
+export function Confirm({
   title,
   children,
   confirmLabel,
@@ -425,6 +450,125 @@ function Confirm({
   );
 }
 
+/** "Due": no due date, on a date, or a number of days after each person is added. */
+export function DuePicker({
+  value,
+  onChange,
+  idPrefix,
+  start,
+}: {
+  value: DueChoice;
+  onChange: (v: DueChoice) => void;
+  idPrefix: string;
+  /** When changing an existing assignment: what it was (the hints then say what the change does). */
+  start?: DueChoice;
+}) {
+  const set = (patch: Partial<DueChoice>) => onChange({ ...value, ...patch });
+  const changed = Boolean(start && !sameDue(value, start));
+  const days = daysValue(value.days);
+  let hint = '';
+
+  if (value.mode === 'none')
+    hint = changed ? 'Removes the due date, its reminders and calendar entries.' : 'No due date — they can take it any time.';
+  else if (value.mode === 'date')
+    hint = changed ? 'Due by the end of that day. Reminders and calendar entries move to the new date.' : 'Due by the end of that day.';
+  else if (changed && days)
+    hint = `People already in it get ${plural(days, 'day')} from today. People added later get ${plural(days, 'day')} from the day they’re added.`;
+  else hint = 'Counted from the day each person is added, so people who join later get the same time.';
+
+  return (
+    <fieldset className='m-0 min-w-0 border-0 p-0' data-testid='carehub-learning-due'>
+      <legend className='mb-1 p-0 text-sm font-medium'>Due</legend>
+      <div className='flex flex-col gap-2 text-sm'>
+        <label className='flex cursor-pointer items-center gap-2'>
+          <input
+            type='radio'
+            className='chl-check'
+            name={`${idPrefix}-due`}
+            checked={value.mode === 'none'}
+            onChange={() => set({ mode: 'none' })}
+            data-testid='carehub-learning-due-none'
+          />
+          No due date
+        </label>
+        <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+          <label className='flex cursor-pointer items-center gap-2'>
+            <input
+              type='radio'
+              className='chl-check'
+              name={`${idPrefix}-due`}
+              checked={value.mode === 'date'}
+              onChange={() => set({ mode: 'date' })}
+              data-testid='carehub-learning-due-on-date'
+            />
+            On a date
+          </label>
+          <input
+            id={`${idPrefix}-date`}
+            type='date'
+            min={todayInputValue()}
+            value={value.date}
+            aria-label='Due date'
+            onClick={() => value.mode !== 'date' && set({ mode: 'date' })}
+            onChange={(e) => set({ mode: 'date', date: e.target.value })}
+            className={cn(chInputClass, 'chl-date w-[170px]', value.mode !== 'date' && 'opacity-60')}
+            data-testid='carehub-learning-assign-due'
+          />
+        </div>
+        <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+          <input
+            id={`${idPrefix}-days-mode`}
+            type='radio'
+            className='chl-check'
+            name={`${idPrefix}-due`}
+            checked={value.mode === 'days'}
+            onChange={() => set({ mode: 'days', days: value.days.trim() ? value.days : '14' })}
+            aria-label='A number of days after they’re added'
+            data-testid='carehub-learning-due-after-days'
+          />
+          <input
+            type='number'
+            inputMode='numeric'
+            min={1}
+            max={MAX_DUE_DAYS}
+            step={1}
+            value={value.days}
+            placeholder='14'
+            aria-label='Number of days after they’re added'
+            onClick={() => value.mode !== 'days' && set({ mode: 'days' })}
+            onChange={(e) => set({ mode: 'days', days: e.target.value })}
+            className={cn(chInputClass, 'w-[76px]', value.mode !== 'days' && 'opacity-60')}
+            data-testid='carehub-learning-due-days'
+          />
+          <label htmlFor={`${idPrefix}-days-mode`} className='cursor-pointer'>
+            days after they’re added
+          </label>
+        </div>
+      </div>
+      <div className='mt-1 text-xs text-text-tertiary'>{hint}</div>
+    </fieldset>
+  );
+}
+
+/** Required / optional radios. */
+export function RequiredPicker({ value, onChange, name }: { value: boolean; onChange: (v: boolean) => void; name: string }) {
+  return (
+    <fieldset className='m-0 border-0 p-0'>
+      <legend className='mb-1 p-0 text-sm font-medium'>Required or optional?</legend>
+      <div className='flex flex-col gap-1.5 text-sm'>
+        <label className='flex cursor-pointer items-center gap-2'>
+          <input type='radio' className='chl-check' name={name} checked={value} onChange={() => onChange(true)} />
+          Required
+        </label>
+        <label className='flex cursor-pointer items-center gap-2'>
+          <input type='radio' className='chl-check' name={name} checked={!value} onChange={() => onChange(false)} />
+          Optional
+        </label>
+      </div>
+    </fieldset>
+  );
+}
+
 interface PickData {
   members: Member[];
   roles: Role[];
@@ -440,11 +584,12 @@ const KIND_TABS: { id: TargetKind; label: string }[] = [
 
 const EVERYONE: NamedTarget = { kind: 'everyone', id: '', name: 'Everyone' };
 
-/** Assign one course (or pick one) to people, groups, roles or everyone, with a due date. */
+/** Assign one course (or pick one), or a learning path, to people, groups, roles or everyone, with a due date. */
 export function AssignDialog({
   workspaceId,
   course,
   courses,
+  path,
   initialTargets,
   onClose,
   onAssigned,
@@ -453,6 +598,8 @@ export function AssignDialog({
   /** The course to assign; leave out to pick one from `courses`. */
   course?: AssignCourse;
   courses?: AssignCourse[];
+  /** Assign this learning path instead of a course. */
+  path?: { id: string; title: string };
   initialTargets?: NamedTarget[];
   onClose: () => void;
   onAssigned: (message: string) => void;
@@ -463,7 +610,7 @@ export function AssignDialog({
   const [tab, setTab] = useState<TargetKind>(initialTargets?.[0]?.kind === 'group' ? 'group' : 'person');
   const [data, setData] = useState<PickData | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
-  const [date, setDate] = useState('');
+  const [due, setDue] = useState<DueChoice>(() => dueChoiceOf(null));
   const [required, setRequired] = useState(true);
   const [note, setNote] = useState('');
   const [calendar, setCalendar] = useState(true);
@@ -497,42 +644,42 @@ export function AssignDialog({
   const reach = data ? reachCount(targets, data.members, data.groups) : null;
   const countOf = (kind: TargetKind) => targets.filter((t) => t.kind === kind).length;
   const grows = targets.some((t) => t.kind !== 'person');
-  const today = todayInputValue();
-  const title = picked?.title || 'a course';
+  const hasDue = due.mode !== 'none';
+  const title = path?.title || picked?.title || 'a course';
 
   const submit = () => {
-    if (!picked) return setError('Pick a course to assign.');
-    if (!canAssignCourse(picked)) return setError(whyNotAssignable(picked));
+    if (!path && !picked) return setError('Pick a course to assign.');
+    if (!path && picked && !canAssignCourse(picked)) return setError(whyNotAssignable(picked));
     if (!targets.length) return setError('Pick at least one person, group or role.');
     if (targets.length > MAX_TARGETS) return setError(`You can pick up to ${MAX_TARGETS} at once. Try a group or a role instead.`);
-    const due = dueFields(date);
+    const dueSend = dueBody(due);
 
-    if (due === 'invalid') return setError('That due date doesn’t look right.');
-    if (due === 'past') return setError('Pick a due date in the future.');
+    if (typeof dueSend === 'string') return setError(dueSend);
     setBusy(true);
     setError('');
-    aapi
-      .assign(workspaceId, {
-        course_id: picked.id,
-        targets: targets.map((t) => ({ kind: t.kind, id: t.id })),
-        due_ms: due.due_ms,
-        tz_minutes: due.tz_minutes,
-        required,
-        ...(note.trim() ? { note: note.trim() } : {}),
-        calendar: due.due_ms !== null && calendar,
-        notify,
-      })
-      .then(
-        (res) => {
-          const more = res.updated ? ` ${plural(res.updated, 'earlier assignment')} updated.` : '';
+    const common = {
+      targets: targets.map((t) => ({ kind: t.kind, id: t.id })),
+      ...dueSend,
+      required,
+      ...(note.trim() ? { note: note.trim() } : {}),
+      calendar: hasDue && calendar,
+      notify,
+    };
+    const sent = path
+      ? aapi.assignPath(workspaceId, path.id, common)
+      : aapi.assign(workspaceId, { course_id: picked ? picked.id : '', ...common });
 
-          onAssigned(`Assigned “${picked.title}” to ${plural(res.people, 'person', 'people')}.${more}`);
-        },
-        (e: unknown) => {
-          setBusy(false);
-          setError(lErrorText(e));
-        }
-      );
+    sent.then(
+      (res) => {
+        const more = res.updated ? ` ${plural(res.updated, 'earlier assignment')} updated.` : '';
+
+        onAssigned(`Assigned “${title}” to ${plural(res.people, 'person', 'people')}.${more}`);
+      },
+      (e: unknown) => {
+        setBusy(false);
+        setError(lErrorText(e));
+      }
+    );
     return undefined;
   };
 
@@ -614,7 +761,7 @@ export function AssignDialog({
 
   return (
     <CareHubModal
-      title={course ? `Assign “${course.title}”` : 'Assign a course'}
+      title={path ? `Assign “${path.title}”` : course ? `Assign “${course.title}”` : 'Assign a course'}
       wide
       onClose={busy ? () => undefined : onClose}
       testId='carehub-learning-assign-dialog'
@@ -630,7 +777,7 @@ export function AssignDialog({
       }
     >
       <div className='flex flex-col gap-5'>
-        {!course && (
+        {!course && !path && (
           <div>
             <FieldLabel htmlFor='chl-assign-course'>Course</FieldLabel>
             {choices.length ? (
@@ -652,7 +799,7 @@ export function AssignDialog({
             )}
           </div>
         )}
-        {picked && !canAssignCourse(picked) && <ChNote tone='warn'>{whyNotAssignable(picked)}</ChNote>}
+        {!path && picked && !canAssignCourse(picked) && <ChNote tone='warn'>{whyNotAssignable(picked)}</ChNote>}
 
         <div>
           <div className='mb-2 text-sm font-medium'>Who should take it?</div>
@@ -708,42 +855,9 @@ export function AssignDialog({
           )}
         </div>
 
-        <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
-          <div>
-            <FieldLabel htmlFor='chl-assign-due' optional>
-              Due date
-            </FieldLabel>
-            <div className='flex flex-wrap items-center gap-2'>
-              <input
-                id='chl-assign-due'
-                type='date'
-                min={today}
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className={cn(chInputClass, 'chl-date w-[170px]')}
-                data-testid='carehub-learning-assign-due'
-              />
-              {date && (
-                <button type='button' className='text-xs text-text-secondary underline' onClick={() => setDate('')}>
-                  No due date
-                </button>
-              )}
-            </div>
-            <div className='mt-1 text-xs text-text-tertiary'>{date ? 'Due by the end of that day.' : 'No due date — they can take it any time.'}</div>
-          </div>
-          <fieldset className='m-0 border-0 p-0'>
-            <legend className='mb-1 p-0 text-sm font-medium'>Required or optional?</legend>
-            <div className='flex flex-col gap-1.5 text-sm'>
-              <label className='flex cursor-pointer items-center gap-2'>
-                <input type='radio' className='chl-check' name='chl-assign-required' checked={required} onChange={() => setRequired(true)} />
-                Required
-              </label>
-              <label className='flex cursor-pointer items-center gap-2'>
-                <input type='radio' className='chl-check' name='chl-assign-required' checked={!required} onChange={() => setRequired(false)} />
-                Optional
-              </label>
-            </div>
-          </fieldset>
+        <div className='grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'>
+          <DuePicker value={due} onChange={setDue} idPrefix='chl-assign' />
+          <RequiredPicker value={required} onChange={setRequired} name='chl-assign-required' />
         </div>
 
         <div>
@@ -768,11 +882,11 @@ export function AssignDialog({
 
         <div className='flex flex-col gap-2.5'>
           <Check
-            checked={calendar && Boolean(date)}
+            checked={calendar && hasDue}
             onChange={setCalendar}
-            disabled={!date}
+            disabled={!hasDue}
             label='Add the due date to their Care Hub calendar'
-            hint={date ? undefined : 'Pick a due date first.'}
+            hint={hasDue ? undefined : 'Pick a due date or a number of days first.'}
             testId='carehub-learning-assign-calendar'
           />
           <Check
@@ -802,24 +916,26 @@ function EditAssignmentDialog({
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
-  const startDate = a.due_ms !== null ? dateInputValue(a.due_ms, a.tz_minutes) : '';
-  const [date, setDate] = useState(startDate);
+  const [start] = useState(() => dueChoiceOf(a));
+  const [due, setDue] = useState(start);
   const [required, setRequired] = useState(a.required);
   const [note, setNote] = useState(a.note);
   const [calendar, setCalendar] = useState(a.calendar);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const hasDue = due.mode !== 'none';
 
   const save = () => {
     const changes: AssignmentChanges = {};
 
-    if (date !== startDate) {
-      const due = dueFields(date);
+    if (!sameDue(due, start)) {
+      const dueSend = dueBody(due);
 
-      if (due === 'invalid') return setError('That due date doesn’t look right.');
-      if (due === 'past') return setError('Pick a due date in the future.');
-      changes.due_ms = due.due_ms;
-      changes.tz_minutes = due.tz_minutes;
+      if (typeof dueSend === 'string') return setError(dueSend);
+      // The due choice is replaced whole: send the one that's picked (or due_ms: null for no due date).
+      if (dueSend.due_days !== null) changes.due_days = dueSend.due_days;
+      else changes.due_ms = dueSend.due_ms;
+      changes.tz_minutes = dueSend.tz_minutes;
     }
 
     if (required !== a.required) changes.required = required;
@@ -860,45 +976,8 @@ function EditAssignmentDialog({
     >
       <div className='flex flex-col gap-4'>
         <div className='text-sm text-text-secondary'>“{a.course_title}”</div>
-        <div>
-          <FieldLabel htmlFor='chl-edit-due' optional>
-            Due date
-          </FieldLabel>
-          <div className='flex flex-wrap items-center gap-2'>
-            <input
-              id='chl-edit-due'
-              type='date'
-              min={todayInputValue()}
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className={cn(chInputClass, 'chl-date w-[170px]')}
-              autoFocus
-            />
-            {date && (
-              <button type='button' className='text-xs text-text-secondary underline' onClick={() => setDate('')}>
-                No due date
-              </button>
-            )}
-          </div>
-          {date !== startDate && (
-            <div className='mt-1 text-xs text-text-tertiary'>
-              {date ? 'Reminders and calendar entries move to the new date.' : 'Removes the due date, its reminders and calendar entries.'}
-            </div>
-          )}
-        </div>
-        <fieldset className='m-0 border-0 p-0'>
-          <legend className='mb-1 p-0 text-sm font-medium'>Required or optional?</legend>
-          <div className='flex flex-wrap gap-4 text-sm'>
-            <label className='flex cursor-pointer items-center gap-2'>
-              <input type='radio' className='chl-check' name='chl-edit-required' checked={required} onChange={() => setRequired(true)} />
-              Required
-            </label>
-            <label className='flex cursor-pointer items-center gap-2'>
-              <input type='radio' className='chl-check' name='chl-edit-required' checked={!required} onChange={() => setRequired(false)} />
-              Optional
-            </label>
-          </div>
-        </fieldset>
+        <DuePicker value={due} onChange={setDue} idPrefix='chl-edit' start={start} />
+        <RequiredPicker value={required} onChange={setRequired} name='chl-edit-required' />
         <div>
           <FieldLabel htmlFor='chl-edit-note' optional>
             Note for them
@@ -913,11 +992,11 @@ function EditAssignmentDialog({
           />
         </div>
         <Check
-          checked={calendar && Boolean(date)}
+          checked={calendar && hasDue}
           onChange={setCalendar}
-          disabled={!date}
+          disabled={!hasDue}
           label='Add the due date to their Care Hub calendar'
-          hint={date ? undefined : 'Pick a due date first.'}
+          hint={hasDue ? undefined : 'Pick a due date or a number of days first.'}
         />
         {error && <ChNote tone='error'>{error}</ChNote>}
       </div>
@@ -1105,6 +1184,29 @@ function AssignCoursesView({ workspaceId, perms }: { workspaceId: string; perms:
 // One course: its assignments
 // ---------------------------------------------------------------------------
 
+/** "Part of the “Induction” path": a path's assignment is changed on its page, not here. */
+function PartOfPath({ a }: { a: Pick<Assignment, 'path_id' | 'path_title'> }) {
+  const navigate = useNavigate();
+
+  if (!a.path_id) return null;
+  const id = a.path_id;
+
+  return (
+    <button
+      type='button'
+      className='text-left text-xs text-text-secondary underline hover:text-text-primary'
+      onClick={(e) => {
+        e.stopPropagation();
+        navigate(pathPath(id));
+      }}
+      title='Change it on the Paths tab'
+      data-testid='carehub-learning-part-of-path'
+    >
+      Part of the “{a.path_title}” path
+    </button>
+  );
+}
+
 function AssignmentRow({
   a,
   index,
@@ -1141,15 +1243,21 @@ function AssignmentRow({
         )}
         <span className='mt-0.5 block text-[11px] text-text-tertiary'>{by}</span>
       </button>
-      {canAssign && (
-        <span className='flex shrink-0 gap-1.5'>
-          <Button type='button' size='sm' variant='outline' onClick={onEdit} data-testid='carehub-learning-assignment-edit-open'>
-            Edit
-          </Button>
-          <Button type='button' size='sm' variant='ghost' onClick={onRemove} data-testid='carehub-learning-assignment-remove-open'>
-            Remove
-          </Button>
+      {a.path_id ? (
+        <span className='max-w-[220px] shrink-0 pt-1'>
+          <PartOfPath a={a} />
         </span>
+      ) : (
+        canAssign && (
+          <span className='flex shrink-0 gap-1.5'>
+            <Button type='button' size='sm' variant='outline' onClick={onEdit} data-testid='carehub-learning-assignment-edit-open'>
+              Edit
+            </Button>
+            <Button type='button' size='sm' variant='ghost' onClick={onRemove} data-testid='carehub-learning-assignment-remove-open'>
+              Remove
+            </Button>
+          </span>
+        )
       )}
     </li>
   );
@@ -1352,6 +1460,11 @@ function AssigneeRow({ p, index, canReports }: { p: Assignee; index: number; can
       )}
       <span className='flex flex-wrap items-center gap-1'>
         <Chip tone={chip.tone}>{chip.label}</Chip>
+        {p.expired && (
+          <Chip tone='amber' title={p.expires_ms !== null ? `Expired on ${shortDate(p.expires_ms)}` : undefined}>
+            Expired
+          </Chip>
+        )}
         {p.overdue && <Chip tone='red'>Overdue</Chip>}
       </span>
       <span className='flex w-[108px] shrink-0 items-center gap-2'>
@@ -1420,7 +1533,7 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
           </div>
           {a.note.trim() && <div className='mt-2 whitespace-pre-wrap break-words text-sm italic text-text-secondary'>“{a.note.trim()}”</div>}
         </div>
-        {perms.canAssign && (
+        {perms.canAssign && !a.path_id && (
           <div className='flex flex-wrap gap-2'>
             <Button type='button' variant='outline' onClick={() => setEditing(true)} data-testid='carehub-learning-assignment-edit-open'>
               Edit
@@ -1431,6 +1544,24 @@ function AssignmentDetailView({ workspaceId, assignmentId, perms }: { workspaceI
           </div>
         )}
       </div>
+      {a.path_id && (
+        <div className='mb-4 flex flex-wrap items-center gap-2'>
+          <div className='min-w-0 flex-1'>
+            <ChNote>
+              Part of the “{a.path_title}” path.{perms.canAssign ? ' Change it on the Paths tab.' : ''}
+            </ChNote>
+          </div>
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            onClick={() => navigate(pathPath(a.path_id || ''))}
+            data-testid='carehub-learning-open-path'
+          >
+            Open the path
+          </Button>
+        </div>
+      )}
       <Notice text={notice} onDismiss={() => setNotice('')} />
 
       <ChSection title='People' hint={progressLine(a)}>
@@ -1969,6 +2100,7 @@ function GroupDetailView({ workspaceId, groupId, perms }: { workspaceId: string;
                   <span className='block break-words text-sm font-medium hover:underline'>{a.course_title}</span>
                   <span className='block text-xs text-text-secondary'>{progressLine(a)}</span>
                 </button>
+                <PartOfPath a={a} />
                 <DueChips a={a} />
               </li>
             ))}
@@ -2104,15 +2236,78 @@ function assignedMeta(c: AssignedCourse) {
   return bits.join(' · ');
 }
 
-function AssignedCard({ course, onOpen }: { course: AssignedCourse; onOpen: () => void }) {
+/** "Take it again" over the bottom corner of a finished course that has run out. It starts the course over; then the caller opens it. */
+export function TakeAgain({
+  title,
+  onRetake,
+  place,
+  children,
+}: {
+  title: string;
+  onRetake: () => Promise<void>;
+  place: string;
+  children: ReactNode;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const go = () => {
+    setBusy(true);
+    setError('');
+    onRetake().then(
+      () => setBusy(false),
+      (e: unknown) => {
+        setBusy(false);
+        setError(lErrorText(e));
+      }
+    );
+  };
+
+  return (
+    <div className='min-w-0'>
+      <div className='relative'>
+        {children}
+        <span className={cn('absolute', place)}>
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            onClick={go}
+            loading={busy}
+            aria-label={`Take it again: ${title}`}
+            data-testid='carehub-learning-retake'
+          >
+            Take it again
+          </Button>
+        </span>
+      </div>
+      {error && (
+        <div role='alert' className='chl-alert mt-1 px-1 text-xs'>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Text for a finish that ran out: "Expired on Fri 30 Oct". */
+export function expiredText(p: { expires_ms?: number | null } | null | undefined) {
+  return p?.expires_ms ? `Expired on ${shortDate(p.expires_ms)}` : 'Expired';
+}
+
+const RENEWAL_HINT = 'You finished this before and it has run out. Please take it again.';
+
+function AssignedCard({ course, onOpen, onRetake }: { course: AssignedCourse; onOpen: () => void; onRetake?: () => Promise<void> }) {
   const p = course.my;
   const done = assignedDone(course);
   const overdue = assignedOverdue(course);
   const due = done ? null : dueChip({ due_ms: course.assignment.due_ms, overdue }, false);
   const action = done ? 'Review' : p ? 'Continue' : 'Start';
   const note = course.assignment.note.trim();
+  const expired = done && Boolean(p?.expired);
+  const retake = expired && onRetake ? onRetake : null;
 
-  return (
+  const card = (
     <button
       type='button'
       onClick={onOpen}
@@ -2130,9 +2325,17 @@ function AssignedCard({ course, onOpen }: { course: AssignedCourse; onOpen: () =
           <div className='truncate text-[15px] font-medium'>{course.title.trim() || 'Untitled course'}</div>
           <div className='mt-1 flex flex-wrap items-center gap-1'>
             {done ? (
-              <Chip tone='green'>✓ Done</Chip>
+              <>
+                <Chip tone='green'>✓ Done</Chip>
+                {expired && <Chip tone='amber'>Expired</Chip>}
+              </>
             ) : (
               <>
+                {course.assignment.renewal && (
+                  <Chip tone='blue' title={RENEWAL_HINT}>
+                    Renewal
+                  </Chip>
+                )}
                 {due && (
                   <Chip tone={due.tone} title={course.assignment.due_ms !== null ? `Due ${new Date(course.assignment.due_ms).toLocaleDateString()}` : undefined}>
                     {due.label}
@@ -2157,19 +2360,40 @@ function AssignedCard({ course, onOpen }: { course: AssignedCourse; onOpen: () =
               <span className='shrink-0 text-xs text-text-secondary'>{p.percent}%</span>
             </>
           ) : (
-            <span className='min-w-0 flex-1 truncate text-xs text-text-tertiary'>
-              {done && p?.completed_ms ? `Finished ${formatWhen(p.completed_ms)}` : assignedMeta(course)}
+            <span className={cn('min-w-0 flex-1 text-xs', expired ? 'chl-warn break-words font-medium' : 'truncate text-text-tertiary')}>
+              {expired ? expiredText(p) : done && p?.completed_ms ? `Finished ${formatWhen(p.completed_ms)}` : assignedMeta(course)}
             </span>
           )}
-          <span className='shrink-0 text-sm font-medium text-text-action'>{action} →</span>
+          {retake ? (
+            <span className='h-8 w-[112px] shrink-0' aria-hidden='true' />
+          ) : (
+            <span className='shrink-0 text-sm font-medium text-text-action'>{action} →</span>
+          )}
         </div>
       </div>
     </button>
   );
+
+  return retake ? (
+    <TakeAgain title={course.title} onRetake={retake} place='bottom-2.5 right-2.5'>
+      {card}
+    </TakeAgain>
+  ) : (
+    card
+  );
 }
 
 /** The "Assigned to you" section: to-do first (overdue, then soonest due), finished ones after. */
-export function AssignedToYou({ courses, onOpen }: { courses: AssignedCourse[]; onOpen: (c: CourseCard) => void }) {
+export function AssignedToYou({
+  courses,
+  onOpen,
+  onRetake,
+}: {
+  courses: AssignedCourse[];
+  onOpen: (c: CourseCard) => void;
+  /** Starts a finished course that has run out over again (then opens it). */
+  onRetake?: (c: CourseCard) => Promise<void>;
+}) {
   const [showAllDone, setShowAllDone] = useState(false);
   const sorted = useMemo(() => sortAssigned(courses), [courses]);
 
@@ -2187,7 +2411,7 @@ export function AssignedToYou({ courses, onOpen }: { courses: AssignedCourse[]; 
       <ChSection title='Assigned to you' hint={hint}>
         <div className='grid grid-cols-1 gap-3 md:grid-cols-2' data-testid='carehub-learning-assigned-list'>
           {[...todo, ...shownDone].map((c) => (
-            <AssignedCard key={c.id} course={c} onOpen={() => onOpen(c)} />
+            <AssignedCard key={c.id} course={c} onOpen={() => onOpen(c)} onRetake={onRetake ? () => onRetake(c) : undefined} />
           ))}
         </div>
         {done.length > shownDone.length && (

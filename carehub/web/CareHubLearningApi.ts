@@ -202,6 +202,8 @@ export interface CourseSettings {
   catalog: boolean;
   /** People who finish get a certificate (the Certificates page lists them). */
   certificate: boolean;
+  /** Months until a finish runs out and people take the course again (1-60); null = never. */
+  recert_months: number | null;
 }
 
 export interface Lesson {
@@ -264,6 +266,10 @@ export interface MyProgress {
   ack_ms: number | null;
   awaiting_ack: boolean;
   version: number;
+  /** When this finish runs out (the course needs renewing); null or missing = never. */
+  expires_ms?: number | null;
+  /** Finished, and the finish has run out. Status stays completed / passed. */
+  expired?: boolean;
 }
 
 export interface LessonProgress {
@@ -416,6 +422,13 @@ export const lapi = {
     chCall<unknown>('post', `${base(ws)}/courses/${enc(id)}/quiz`, { answers }).then((d) => normalizeQuizResponse(d)),
   ack: (ws: string, id: string) =>
     chCall<unknown>('post', `${base(ws)}/courses/${enc(id)}/ack`, {}).then((d) => normalizeEnrollment(obj(d).enrollment)),
+  /** Starts a course again once my finish has run out. `renewed`: it counts as my renewal (I'm assigned it). */
+  retake: (ws: string, id: string) =>
+    chCall<unknown>('post', `${base(ws)}/courses/${enc(id)}/retake`, {}).then((d) => {
+      const o = obj(d);
+
+      return { renewed: bool(o.renewed), due_ms: typeof o.due_ms === 'number' && Number.isFinite(o.due_ms) ? o.due_ms : null };
+    }),
 
   studioList: (ws: string) =>
     chCall<unknown>('get', `${base(ws)}/studio`).then((d) => arr(obj(d).courses).map(normalizeStudioRow)),
@@ -690,6 +703,7 @@ export function normalizeContent(raw: unknown): Content {
       completion: oneOf(s.completion, ['all_lessons', 'pass_quiz', 'all_lessons_and_quiz'], 'all_lessons'),
       catalog: bool(s.catalog, true),
       certificate: bool(s.certificate),
+      recert_months: recertMonths(s.recert_months),
     },
     lessons: arr(o.lessons).map(normalizeLesson),
     quiz: {
@@ -737,6 +751,8 @@ function normalizeMy(raw: unknown): MyProgress | null {
     ack_ms: typeof o.ack_ms === 'number' ? o.ack_ms : null,
     awaiting_ack: bool(o.awaiting_ack),
     version: num(o.version, 1),
+    expires_ms: typeof o.expires_ms === 'number' && Number.isFinite(o.expires_ms) ? o.expires_ms : null,
+    expired: bool(o.expired),
   };
 }
 
@@ -1185,7 +1201,15 @@ export function defaultSettings(): CourseSettings {
     completion: 'all_lessons',
     catalog: true,
     certificate: false,
+    recert_months: null,
   };
+}
+
+export const MAX_RECERT_MONTHS = 60;
+
+/** A whole number of months 1-60, or null (never). Anything else counts as never, as on the server. */
+export function recertMonths(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_RECERT_MONTHS ? v : null;
 }
 
 /** Applies a preset's settings (the content stays; the quiz is switched on/off where the preset says so). */

@@ -26,6 +26,7 @@ import {
   LEARNING_PATH,
   learningNotLive,
   lErrorText,
+  MAX_RECERT_MONTHS,
   normalizeQuestion,
   plural,
   presetInfo,
@@ -62,7 +63,7 @@ import {
   useDragSort,
 } from './CareHubLearningStudioBlocks';
 import { SaveBlockTemplateButton, SaveLessonTemplateButton, TemplatesSection, useBlockTemplates } from './CareHubLearningTemplates';
-import { CareHubModal, ChNote, ChSection, ChSelect } from './CareHubUi';
+import { CareHubModal, chInputClass, ChNote, ChSection, ChSelect } from './CareHubUi';
 
 import type { ExampleCourse } from './CareHubLearningExample';
 import type { BankKit } from './CareHubLearningQbank';
@@ -1038,6 +1039,35 @@ function BackToStudio({ onClick }: { onClick: () => void }) {
   );
 }
 
+/** Months until a finish runs out: a whole number 1-60, or empty for never. */
+function RecertField({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  return (
+    <input
+      type='number'
+      inputMode='numeric'
+      min={1}
+      max={MAX_RECERT_MONTHS}
+      step={1}
+      placeholder='Never'
+      aria-label='Needs renewing after this many months (empty = never)'
+      className={cn(chInputClass, 'w-24')}
+      value={draft ?? (value === null ? '' : String(value))}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const n = Number(raw);
+
+        setDraft(raw);
+        if (raw.trim() === '') onChange(null);
+        else if (Number.isFinite(n)) onChange(Math.min(MAX_RECERT_MONTHS, Math.max(1, Math.round(n))));
+      }}
+      onBlur={() => setDraft(null)}
+      data-testid='carehub-learning-recert'
+    />
+  );
+}
+
 export function LearningStudioEditor({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
   const { courseId = '' } = useParams();
@@ -1840,6 +1870,20 @@ function Editor({
               label='Give a certificate when someone finishes'
               hint='When they finish, they see a “View my certificate” link. Certificates are listed on the Certificates page.'
             />
+            <Field
+              label='Renewal'
+              hint={
+                s.recert_months
+                  ? `Each finish runs out after ${plural(s.recert_months, 'month')}. People it’s assigned to are then asked to take it again, with 30 days to do it.`
+                  : 'Empty = it never runs out.'
+              }
+            >
+              <span className='flex flex-wrap items-center gap-2 text-sm'>
+                <span>Needs renewing after</span>
+                <RecertField value={s.recert_months} onChange={(v) => setSettings({ recert_months: v })} />
+                <span>months (people take the course again)</span>
+              </span>
+            </Field>
           </div>
         </ChSection>
         <ChSection title='Who can find it'>

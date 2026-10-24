@@ -1,6 +1,7 @@
 // CareHub Learning: the /app/learning page. "My learning" (assigned to you, continue, finished, catalog), the course
 // player, Studio for people who build courses, Assign for people who assign courses, Reports for people who can see
-// course reports, and certificates (my certificates, a printable certificate, verify a code).
+// course reports, and certificates (my certificates, a printable certificate, verify a code). Learning paths live on
+// the Assign tab (Paths) and on My learning ("Your learning paths").
 import { Component, useEffect, useMemo, useState } from 'react';
 
 import type { ErrorInfo, ReactNode } from 'react';
@@ -12,11 +13,12 @@ import { cn } from '@/lib/utils';
 
 import { carehubCan, formatWhen, lastWorkspaceId, UUID_RE, useCareHubMe } from './CareHubCore';
 import { formatMinutes, isFinished, lapi, LEARNING_PATH, learningNotLive, lErrorText, plural, statusInfo } from './CareHubLearningApi';
-import { AssignedToYou, LearningAssignPage, useAssignedCourses } from './CareHubLearningAssign';
+import { AssignedToYou, AssignStyle, expiredText, LearningAssignPage, TakeAgain, useAssignedCourses } from './CareHubLearningAssign';
 import { assignedDone } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
 import { LearningCertificate, LearningHeaderLinks, LearningMyCertificates, LearningVerify } from './CareHubLearningCertificate';
 import { LearningReviewPage } from './CareHubLearningDrafts';
+import { LearningPathsPage, useMyPaths, YourLearningPaths } from './CareHubLearningPaths';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import {
   LearningReportCourse,
@@ -107,7 +109,7 @@ function ContinueCard({ course, onOpen }: { course: CourseCard; onOpen: () => vo
 
 function CourseTile({ course, onOpen }: { course: CourseCard; onOpen: () => void }) {
   const p = course.my;
-  const chip = p ? statusInfo(p) : null;
+  const chip = p ? (p.expired ? { label: 'Expired', tone: 'amber' as const } : statusInfo(p)) : null;
   const action = !p ? 'Start' : isFinished(p) ? 'Review' : 'Continue';
 
   return (
@@ -123,7 +125,11 @@ function CourseTile({ course, onOpen }: { course: CourseCard; onOpen: () => void
       <div className='flex min-w-0 flex-1 flex-col gap-1.5 p-3'>
         <div className='flex min-w-0 items-start gap-2'>
           <div className='min-w-0 flex-1 break-words text-[15px] font-medium leading-snug'>{course.title.trim() || 'Untitled course'}</div>
-          {chip && <Chip tone={chip.tone}>{chip.label}</Chip>}
+          {chip && (
+            <Chip tone={chip.tone} title={p?.expired ? expiredText(p) : undefined}>
+              {chip.label}
+            </Chip>
+          )}
         </div>
         {course.summary.trim() && <div className='chl-clamp2 text-sm text-text-secondary'>{course.summary}</div>}
         <div className='mt-auto flex items-center gap-2 pt-1'>
@@ -135,10 +141,12 @@ function CourseTile({ course, onOpen }: { course: CourseCard; onOpen: () => void
   );
 }
 
-function FinishedRow({ course, onOpen }: { course: CourseCard; onOpen: () => void }) {
+function FinishedRow({ course, onOpen, onRetake }: { course: CourseCard; onOpen: () => void; onRetake: () => Promise<void> }) {
   const p = course.my;
   const chip = statusInfo(p);
   const gone = course.archived;
+  // Finished, but it has run out: they can take it again.
+  const expired = Boolean(p?.expired) && !gone;
   const body = (
     <>
       <span className='min-w-0 flex-1'>
@@ -147,18 +155,34 @@ function FinishedRow({ course, onOpen }: { course: CourseCard; onOpen: () => voi
           {p?.completed_ms ? `Finished ${formatWhen(p.completed_ms)}` : 'Finished'}
           {gone ? ' · No longer available' : ''}
         </span>
+        {expired && <span className='chl-warn block truncate text-xs font-medium'>{expiredText(p)}</span>}
       </span>
       {p && p.score !== null && course.quiz && <span className='shrink-0 text-xs text-text-secondary'>{p.score}%</span>}
-      <Chip tone={chip.tone}>{chip.label}</Chip>
+      {/* On a phone the "Expired on …" line says it all, so the chip makes room for "Take it again". */}
+      <span className={cn('shrink-0', expired && 'max-sm:hidden')}>
+        <Chip tone={chip.tone}>{chip.label}</Chip>
+      </span>
+      {expired && <span className='h-8 w-[112px] shrink-0' aria-hidden='true' />}
     </>
   );
 
   if (gone) return <div className='flex items-center gap-3 rounded-[10px] px-3 py-2.5 opacity-80'>{body}</div>;
-
-  return (
-    <button type='button' onClick={onOpen} className='flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-fill-content-hover'>
+  const row = (
+    <button
+      type='button'
+      onClick={onOpen}
+      className='flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-fill-content-hover'
+    >
       {body}
     </button>
+  );
+
+  return expired ? (
+    <TakeAgain title={course.title.trim() || 'Untitled course'} onRetake={onRetake} place='right-3 top-1/2 -translate-y-1/2'>
+      {row}
+    </TakeAgain>
+  ) : (
+    row
   );
 }
 
@@ -171,6 +195,8 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
   const [reload, setReload] = useState(0);
   // Courses assigned to me (undefined while loading, null when that part of the server isn't there yet).
   const assigned = useAssignedCourses(workspaceId, reload);
+  // My learning paths (the same: undefined while loading, null when the server doesn't have paths yet).
+  const paths = useMyPaths(workspaceId, reload);
 
   useEffect(() => {
     if (!workspaceId) return undefined;
@@ -192,8 +218,17 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
     };
   }, [workspaceId, reload]);
 
-  const open = (c: CourseCard) => navigate(`${LEARNING_PATH}/course/${c.id}`);
-  // Unfinished assigned courses already show under "Assigned to you".
+  const openId = (id: string) => navigate(`${LEARNING_PATH}/course/${id}`);
+  const open = (c: CourseCard) => openId(c.id);
+  // Starts a finished course that has run out over again, then opens it.
+  const retake = (c: CourseCard) => lapi.retake(workspaceId, c.id).then(() => open(c));
+  // Courses that only reach me through a path show in the path, not again under "Assigned to you".
+  const assignedShown = useMemo(() => {
+    const shownPaths = new Set((paths || []).map((x) => x.id));
+
+    return (assigned || []).filter((c) => c.assignment.direct || !c.assignment.paths.some((id) => shownPaths.has(id)));
+  }, [assigned, paths]);
+  // Unfinished assigned courses already show under "Assigned to you" (or in a path).
   const assignedTodo = useMemo(() => new Set((assigned || []).filter((c) => !assignedDone(c)).map((c) => c.id)), [assigned]);
   const inProgress = useMemo(() => (my || []).filter((c) => c.my && !isFinished(c.my) && !c.archived && !assignedTodo.has(c.id)), [my, assignedTodo]);
   const finished = useMemo(() => (my || []).filter((c) => c.my && isFinished(c.my)), [my]);
@@ -215,7 +250,7 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
     );
   }
 
-  if (!my || !catalog || assigned === undefined) return <div className='text-sm text-text-tertiary'>Loading…</div>;
+  if (!my || !catalog || assigned === undefined || paths === undefined) return <div className='text-sm text-text-tertiary'>Loading…</div>;
 
   const nothing = !catalog.some((c) => !c.archived) && !my.length && !assigned?.length;
 
@@ -244,7 +279,9 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
 
   return (
     <>
-      {assigned && assigned.length > 0 && <AssignedToYou courses={assigned} onOpen={open} />}
+      <AssignStyle />
+      {paths && paths.length > 0 && <YourLearningPaths paths={paths} onOpen={openId} />}
+      {assignedShown.length > 0 && <AssignedToYou courses={assignedShown} onOpen={open} onRetake={retake} />}
 
       {inProgress.length > 0 && (
         <ChSection title='Continue learning'>
@@ -287,7 +324,7 @@ function LearningHome({ workspaceId, canBuild }: { workspaceId: string; canBuild
         <ChSection title='Finished' hint={plural(finished.length, 'course')}>
           <div className='flex flex-col rounded-[12px] border border-border-primary p-1'>
             {finished.map((c) => (
-              <FinishedRow key={c.id} course={c} onOpen={() => open(c)} />
+              <FinishedRow key={c.id} course={c} onOpen={() => open(c)} onRetake={() => retake(c)} />
             ))}
           </div>
         </ChSection>
@@ -464,6 +501,14 @@ function LearningRoutes() {
             element={
               <OnlyFor known={known} allowed={canReports} message={REPORTS_ONLY}>
                 <LearningReportsTeams workspaceId={workspaceId} />
+              </OnlyFor>
+            }
+          />
+          <Route
+            path='assign/paths/*'
+            element={
+              <OnlyFor known={known} allowed={canSeeAssign} message={ASSIGN_ONLY}>
+                <LearningPathsPage workspaceId={workspaceId} canAssign={canAssign} canBuild={canBuild} canReports={canReports} />
               </OnlyFor>
             }
           />
