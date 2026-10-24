@@ -3,11 +3,12 @@
 // files only call in. Shapes and words follow P4-QBANK and the server (CareHub-Cloud `carehub_learning_bank.rs`).
 //
 // Only types come from the other Learning files: they import this file, so runtime imports would make a cycle.
-// The Studio's question editor, rich text and error helpers are passed in as props instead.
+// The Studio's question editor, rich text and error helpers are passed in as props instead. (The keyboard helpers in
+// CareHubLearningA11y are fine to import: that file imports nothing from Learning.)
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import type { ComponentType, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { ComponentType, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 
@@ -15,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 import { chCall, CH_API, chErrorText, formatWhen, UUID_RE } from './CareHubCore';
+import { learningTitle, usePageTitle, useRefocus } from './CareHubLearningA11y';
 import { CareHubModal, chInputClass, ChNote, ChSection, ChSelect } from './CareHubUi';
 
 import type { Content, Question, QuestionKind } from './CareHubLearningApi';
@@ -671,15 +673,19 @@ function SmallIcon({
   disabled,
   danger,
   children,
+  buttonRef,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
   children: ReactNode;
+  /** For putting focus back on it after its list changes (useRefocus). */
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   return (
     <button
+      ref={buttonRef}
       type='button'
       aria-label={label}
       title={label}
@@ -695,9 +701,20 @@ function SmallIcon({
   );
 }
 
-function AddLink({ onClick, children, disabled }: { onClick: () => void; children: ReactNode; disabled?: boolean }) {
+function AddLink({
+  onClick,
+  children,
+  disabled,
+  buttonRef,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  disabled?: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
+}) {
   return (
     <button
+      ref={buttonRef}
       type='button'
       disabled={disabled}
       onClick={onClick}
@@ -966,12 +983,14 @@ export function SurveyEditor({ block, onChange }: { block: SurveyBlock; onChange
   const qs = block.questions;
   const setQuestions = (questions: SurveyQuestion[]) => onChange({ ...block, questions });
   const setQ = (i: number, patch: Partial<SurveyQuestion>) => setQuestions(qs.map((q, j) => (j === i ? { ...q, ...patch } : q)));
+  const refocus = useRefocus();
   const move = (from: number, to: number) => {
     if (to < 0 || to >= qs.length) return;
     const next = qs.slice();
     const [q] = next.splice(from, 1);
 
     next.splice(to, 0, q);
+    refocus.moved(q.id, to - from);
     setQuestions(next);
   };
   const setKind = (i: number, kind: SurveyKind) => {
@@ -1005,13 +1024,22 @@ export function SurveyEditor({ block, onChange }: { block: SurveyBlock; onChange
         <div key={q.id} className='rounded-[10px] border border-border-primary'>
           <div className='flex items-center gap-0.5 border-b border-border-primary py-1 pl-3 pr-1'>
             <span className='min-w-0 flex-1 truncate text-xs font-semibold text-text-secondary'>Question {i + 1}</span>
-            <SmallIcon label='Move up' disabled={i === 0} onClick={() => move(i, i - 1)}>
+            <SmallIcon buttonRef={refocus.reg(`up:${q.id}`)} label='Move up' disabled={i === 0} onClick={() => move(i, i - 1)}>
               ↑
             </SmallIcon>
-            <SmallIcon label='Move down' disabled={i >= qs.length - 1} onClick={() => move(i, i + 1)}>
+            <SmallIcon buttonRef={refocus.reg(`down:${q.id}`)} label='Move down' disabled={i >= qs.length - 1} onClick={() => move(i, i + 1)}>
               ↓
             </SmallIcon>
-            <SmallIcon label='Delete question' danger disabled={qs.length <= 1} onClick={() => setQuestions(qs.filter((_, j) => j !== i))}>
+            <SmallIcon
+              buttonRef={refocus.reg(`rm:${q.id}`)}
+              label='Delete question'
+              danger
+              disabled={qs.length <= 1}
+              onClick={() => {
+                refocus.removed('rm', qs, i, `add:${SURVEY_KINDS[0].value}`);
+                setQuestions(qs.filter((_, j) => j !== i));
+              }}
+            >
               🗑
             </SmallIcon>
           </div>
@@ -1049,12 +1077,25 @@ export function SurveyEditor({ block, onChange }: { block: SurveyBlock; onChange
                       aria-label={`Question ${i + 1}, choice ${k + 1}`}
                       onChange={(e) => setQ(i, { options: q.options.map((x, j) => (j === k ? { ...x, text: e.target.value } : x)) })}
                     />
-                    <SmallIcon label='Remove choice' danger disabled={q.options.length <= 2} onClick={() => setQ(i, { options: q.options.filter((_, j) => j !== k) })}>
+                    <SmallIcon
+                      buttonRef={refocus.reg(`rm:${o.id}`)}
+                      label='Remove choice'
+                      danger
+                      disabled={q.options.length <= 2}
+                      onClick={() => {
+                        refocus.removed('rm', q.options, k, `add:${q.id}`);
+                        setQ(i, { options: q.options.filter((_, j) => j !== k) });
+                      }}
+                    >
                       ×
                     </SmallIcon>
                   </div>
                 ))}
-                <AddLink disabled={q.options.length >= SURVEY_CHOICES_MAX} onClick={() => setQ(i, { options: [...q.options, { id: qid('so'), text: '' }] })}>
+                <AddLink
+                  buttonRef={refocus.reg(`add:${q.id}`)}
+                  disabled={q.options.length >= SURVEY_CHOICES_MAX}
+                  onClick={() => setQ(i, { options: [...q.options, { id: qid('so'), text: '' }] })}
+                >
                   Add a choice
                 </AddLink>
               </div>
@@ -1065,7 +1106,12 @@ export function SurveyEditor({ block, onChange }: { block: SurveyBlock; onChange
       <div className='flex flex-wrap items-center gap-1'>
         <span className='mr-1 text-xs text-text-tertiary'>Add a question:</span>
         {SURVEY_KINDS.map((k) => (
-          <AddLink key={k.value} disabled={qs.length >= SURVEY_QUESTIONS_MAX} onClick={() => setQuestions([...qs, blankSurveyQuestion(k.value)])}>
+          <AddLink
+            key={k.value}
+            buttonRef={refocus.reg(`add:${k.value}`)}
+            disabled={qs.length >= SURVEY_QUESTIONS_MAX}
+            onClick={() => setQuestions([...qs, blankSurveyQuestion(k.value)])}
+          >
             {k.label}
           </AddLink>
         ))}
@@ -1371,6 +1417,8 @@ export function QuizDrawsEditor({
   const total = ownPerAttempt + drawn;
   const setRow = (i: number, patch: Partial<QuizDraw>) => onChange(draws.map((d, j) => (j === i ? { ...d, ...patch } : d)));
   const unused = (banks || []).filter((b) => !draws.some((d) => d.bank_id === b.id));
+  // Rows are keyed by position, so focus keys use positions too.
+  const refocus = useRefocus();
   const addRow = () => {
     const b = unused[0] || (banks || [])[0];
 
@@ -1419,7 +1467,15 @@ export function QuizDrawsEditor({
                   </option>
                 ))}
               </select>
-              <SmallIcon label={`Remove row ${i + 1}`} danger onClick={() => onChange(draws.filter((_, j) => j !== i))}>
+              <SmallIcon
+                buttonRef={refocus.reg(`rm:${i}`)}
+                label={`Remove row ${i + 1}`}
+                danger
+                onClick={() => {
+                  refocus.later(`rm:${i}`, `rm:${i - 1}`, 'add');
+                  onChange(draws.filter((_, j) => j !== i));
+                }}
+              >
                 ×
               </SmallIcon>
               {bank && (
@@ -1441,7 +1497,7 @@ export function QuizDrawsEditor({
         )}
         <div className='flex flex-wrap items-center gap-2'>
           {banks && banks.length > 0 && (
-            <AddLink disabled={draws.length >= DRAWS_MAX} onClick={addRow}>
+            <AddLink buttonRef={refocus.reg('add')} disabled={draws.length >= DRAWS_MAX} onClick={addRow}>
               Add questions from a bank
             </AddLink>
           )}
@@ -1556,6 +1612,8 @@ export function QuestionBanksPage({ workspaceId, bankId, studioPath, kit }: { wo
   const open = (id: string) => navigate(`${listPath}&bank=${enc(id)}`);
 
   useQbankCss();
+  // A bank's own page names the tab after the bank.
+  usePageTitle(UUID_RE.test(bankId) ? null : learningTitle('Question banks', 'Studio'));
   if (bankId) {
     if (!UUID_RE.test(bankId)) {
       return (
@@ -1605,6 +1663,7 @@ function BankList({ workspaceId, kit, onOpen, onCourses }: { workspaceId: string
   const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState<BankSummary | null>(null);
   const [notice, setNotice] = useState('');
+  const refocus = useRefocus();
 
   useEffect(() => {
     let alive = true;
@@ -1631,7 +1690,7 @@ function BankList({ workspaceId, kit, onOpen, onCourses }: { workspaceId: string
           <h2 className='text-lg font-semibold'>Question banks</h2>
           <div className='text-sm text-text-secondary'>Questions to share between quizzes. A quiz can take a few random ones from a bank each attempt.</div>
         </div>
-        <Button type='button' onClick={() => setCreating(true)} data-testid='chq-bank-new'>
+        <Button ref={refocus.reg('new')} type='button' onClick={() => setCreating(true)} data-testid='chq-bank-new'>
           + New question bank
         </Button>
       </div>
@@ -1657,7 +1716,7 @@ function BankList({ workspaceId, kit, onOpen, onCourses }: { workspaceId: string
         <ul className='flex flex-col gap-2' style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           {banks.map((b) => (
             <li key={b.id} className='flex items-start gap-2 rounded-[12px] border border-border-primary p-3 hover:bg-fill-content-hover'>
-              <button type='button' className='min-w-0 flex-1 text-left' onClick={() => onOpen(b.id)}>
+              <button ref={refocus.reg(`open:${b.id}`)} type='button' className='min-w-0 flex-1 text-left' onClick={() => onOpen(b.id)}>
                 <span className='block truncate text-sm font-semibold text-text-primary'>{b.title}</span>
                 <span className='block text-xs text-text-tertiary'>
                   {count(b.question_count, 'question')}
@@ -1681,6 +1740,10 @@ function BankList({ workspaceId, kit, onOpen, onCourses }: { workspaceId: string
           kit={kit}
           onClose={() => setToDelete(null)}
           onDeleted={() => {
+            // Its row goes when the list reloads: move to the next bank now (that row stays).
+            const i = (banks || []).findIndex((b) => b.id === toDelete.id);
+
+            refocus.removed('open', banks || [], i, 'new');
             setNotice(`Deleted “${toDelete.title}”.`);
             setToDelete(null);
             setRound((n) => n + 1);
@@ -1858,6 +1921,9 @@ function BankEditor({
   const [save, setSave] = useState<SaveState>('');
   const [saveError, setSaveError] = useState('');
   const [undo, setUndo] = useState<{ q: Question; index: number } | null>(null);
+  const refocus = useRefocus();
+
+  usePageTitle(learningTitle(draft.title.trim() || (loaded ? 'Untitled bank' : ''), 'Question banks', 'Studio'));
   const draftRef = useRef(draft);
   const baseRef = useRef(0);
   const dirtyRef = useRef(false);
@@ -1995,7 +2061,8 @@ function BankEditor({
     timerRef.current = window.setTimeout(() => void saveRef.current(), 1500);
   };
   const setQuestions = (fn: (qs: Question[]) => Question[]) => update((d) => ({ ...d, questions: fn(d.questions) }));
-  const moveQ = (from: number, to: number) =>
+  const moveQ = (id: string, from: number, to: number) => {
+    refocus.moved(id, to - from);
     setQuestions((qs) => {
       if (to < 0 || to >= qs.length) return qs;
       const next = qs.slice();
@@ -2004,6 +2071,7 @@ function BankEditor({
       next.splice(to, 0, q);
       return next;
     });
+  };
 
   if (loadError) {
     return (
@@ -2095,10 +2163,15 @@ function BankEditor({
             <div key={q.id} className='rounded-[12px] border border-border-primary' data-testid='chq-bank-question'>
               <div className='flex items-center gap-0.5 border-b border-border-primary py-1 pl-3 pr-1'>
                 <span className='min-w-0 flex-1 truncate text-xs font-semibold text-text-secondary'>Question {i + 1}</span>
-                <SmallIcon label='Move up' disabled={i === 0} onClick={() => moveQ(i, i - 1)}>
+                <SmallIcon buttonRef={refocus.reg(`up:${q.id}`)} label='Move up' disabled={i === 0} onClick={() => moveQ(q.id, i, i - 1)}>
                   ↑
                 </SmallIcon>
-                <SmallIcon label='Move down' disabled={i >= qs.length - 1} onClick={() => moveQ(i, i + 1)}>
+                <SmallIcon
+                  buttonRef={refocus.reg(`down:${q.id}`)}
+                  label='Move down'
+                  disabled={i >= qs.length - 1}
+                  onClick={() => moveQ(q.id, i, i + 1)}
+                >
                   ↓
                 </SmallIcon>
                 <SmallIcon
@@ -2112,6 +2185,8 @@ function BankEditor({
                   label='Delete question'
                   danger
                   onClick={() => {
+                    // Focus the next question (else the previous one, else Undo).
+                    refocus.removed('q', qs, i, 'undo');
                     setUndo({ q, index: i });
                     setQuestions((list) => list.filter((x) => x.id !== q.id));
                   }}
@@ -2119,21 +2194,26 @@ function BankEditor({
                   🗑
                 </SmallIcon>
               </div>
-              <div className='p-3'>
+              <div ref={refocus.reg(`q:${q.id}`)} className='p-3'>
                 <kit.QuestionEditor q={q} inQuiz onChange={(nq) => setQuestions((list) => list.map((x) => (x.id === q.id ? nq : x)))} />
               </div>
             </div>
           ))}
+          <div role='status' className='sr-only'>
+            {undo && <span key={undo.q.id}>Question deleted.</span>}
+          </div>
           {undo && (
             <div className='flex flex-wrap items-center gap-2 rounded-[10px] bg-fill-content-hover px-3 py-2 text-sm'>
               <span className='min-w-0 flex-1'>Question deleted.</span>
               <Button
+                ref={refocus.reg('undo')}
                 type='button'
                 size='sm'
                 variant='outline'
                 onClick={() => {
                   const u = undo;
 
+                  refocus.later(`q:${u.q.id}`);
                   setUndo(null);
                   setQuestions((list) => (list.some((x) => x.id === u.q.id) ? list : [...list.slice(0, u.index), u.q, ...list.slice(u.index)]));
                 }}
