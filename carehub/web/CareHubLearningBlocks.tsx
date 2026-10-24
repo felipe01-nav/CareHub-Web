@@ -20,11 +20,13 @@ import {
   presetInfo,
   urlAllowed,
 } from './CareHubLearningApi';
+import { Blocks3View, JumpLink } from './CareHubLearningBlocks3';
 import { coerceInteractAnswer, InteractQuestionView, isInteractKind, LabeledGraphicView } from './CareHubLearningInteract';
 import { UUID_RE } from './CareHubCore';
 import { chInputClass } from './CareHubUi';
 
 import type { Answer, Block, BlockOf, ChipTone, KcRecord, Preset, Question, ScenarioChoice } from './CareHubLearningApi';
+import type { Blocks3Kit } from './CareHubLearningBlocks3';
 
 // ---------------------------------------------------------------------------
 // Styles that must follow dark mode (Tailwind's dark: variants don't apply in this app)
@@ -149,6 +151,8 @@ export function safeHref(url: string): string | null {
   // Same rule as urlAllowed: no control characters anywhere, and "//host" or "/\host" is another website.
   if (hasControlChar(url)) return null;
   if (/^https?:\/\/\S+$/i.test(u) || /^mailto:\S+$/i.test(u)) return u;
+  // A link to another lesson or block of this course; the player opens it (JumpLink).
+  if (/^#(?:lesson|block)-[A-Za-z0-9_-]+$/.test(u)) return u;
   if (u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\')) return u;
   return null;
 }
@@ -172,7 +176,11 @@ function inline(text: string, key: string, depth = 0): ReactNode[] {
       const href = safeHref(m[4] || '');
 
       out.push(
-        href ? (
+        href?.startsWith('#') ? (
+          <JumpLink key={k} href={href}>
+            {m[3]}
+          </JumpLink>
+        ) : href ? (
           <a key={k} href={href} target='_blank' rel='noopener noreferrer' className='text-text-action underline underline-offset-2'>
             {m[3]}
           </a>
@@ -396,8 +404,8 @@ export interface BlockCtx {
   /** Blocks already completed (finished scenarios, clicked Continue buttons). */
   done: Set<string>;
   onKcAnswer: (block: BlockOf<'knowledge_check'>, answer: Answer, correct: boolean) => void;
-  /** A scenario was played to the end, or a process was stepped through to its last step. */
-  onScenarioDone: (block: BlockOf<'scenario'> | BlockOf<'process'>) => void;
+  /** A scenario was played to the end, a process was stepped through to its last step, or every card was sorted. */
+  onScenarioDone: (block: BlockOf<'scenario'> | BlockOf<'process'> | BlockOf<'sorting'>) => void;
   onMedia: (blockId: string, playing: boolean) => void;
 }
 
@@ -694,6 +702,17 @@ function saveBlob(blob: Blob, name: string) {
 
 const TONE_EMOJI: Record<string, string> = { info: 'ℹ️', tip: '💡', warning: '⚠️', success: '✅' };
 
+/** What the sorting, timeline, gallery, table and buttons blocks borrow from this file (CareHubLearningBlocks3). */
+const BLOCKS3_KIT: Blocks3Kit = {
+  Text: RichText,
+  useSrc: useFileSrc,
+  useNarrow: useNarrowLayout,
+  urlOk: urlAllowed,
+  isCareHubFile,
+  fileHref: careHubFileHref,
+  fetchFile: fetchCareHubFile,
+};
+
 export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
   switch (block.type) {
     case 'heading': {
@@ -811,6 +830,12 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
       return <ScenarioBlock block={block} ctx={ctx} />;
     case 'labeled_graphic':
       return <LabeledGraphicView block={block} preview={ctx.preview} useSrc={useFileSrc} />;
+    case 'sorting':
+    case 'timeline':
+    case 'gallery':
+    case 'table':
+    case 'buttons':
+      return <Blocks3View block={block} ctx={ctx} kit={BLOCKS3_KIT} />;
     case 'page_link': {
       const ok = UUID_RE.test(block.view_id) && Boolean(ctx.workspaceId);
 

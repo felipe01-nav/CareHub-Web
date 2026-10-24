@@ -1333,6 +1333,7 @@ for _name in [
     "CareHubLearningStudio.tsx", "CareHubLearningStudioBlocks.tsx", "CareHubLearningExample.ts",
     "CareHubLearningReports.tsx",
     "CareHubLearningInteract.tsx",
+    "CareHubLearningBlocks3.tsx",
 ]:
     EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
 EXTRA_FILES[HERE / "web" / "CareHubLearningPaste.tsx"] = "src/components/carehub/CareHubLearningPaste.tsx"
