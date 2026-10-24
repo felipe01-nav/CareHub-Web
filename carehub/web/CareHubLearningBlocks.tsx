@@ -22,12 +22,14 @@ import {
 } from './CareHubLearningApi';
 import { Blocks3View, JumpLink } from './CareHubLearningBlocks3';
 import { coerceInteractAnswer, InteractQuestionView, isInteractKind, LabeledGraphicView } from './CareHubLearningInteract';
+import { MatchCards, pickedFeedback, SurveyView } from './CareHubLearningQbank';
 import { UUID_RE } from './CareHubCore';
 import { chInputClass } from './CareHubUi';
 import { CaptionsTrack, MediaTranscript } from './CareHubLearningPlayer3';
 
 import type { Answer, Block, BlockOf, ChipTone, KcRecord, Preset, Question, ScenarioChoice } from './CareHubLearningApi';
 import type { Blocks3Kit } from './CareHubLearningBlocks3';
+import type { SavedSurvey, SurveyAnswers, SurveyBlock } from './CareHubLearningQbank';
 
 // ---------------------------------------------------------------------------
 // Styles that must follow dark mode (Tailwind's dark: variants don't apply in this app)
@@ -230,6 +232,7 @@ export function QuestionView({
   reveal,
   name,
   number,
+  optionFeedback,
 }: {
   q: Question;
   value: Answer | undefined;
@@ -239,6 +242,8 @@ export function QuestionView({
   reveal?: Answer;
   name: string;
   number?: number;
+  /** qbank3: option id → the feedback shown under that picked option (after checking). */
+  optionFeedback?: Record<string, string>;
 }) {
   const narrow = useNarrowLayout();
   const rights = useMemo(() => (q.kind === 'matching' ? matchingRights(q) : []), [q]);
@@ -271,6 +276,16 @@ export function QuestionView({
       {hint && <div className='mb-2 text-xs text-text-tertiary'>{hint}</div>}
       {q.kind === 'matching' ? (
         <div className='mt-2 flex flex-col gap-2'>
+          {!disabled && (
+            <MatchCards
+              questionId={q.id}
+              lefts={q.pairs.map((p) => ({ id: p.id, text: p.left }))}
+              rights={rights}
+              value={value && typeof value === 'object' && !Array.isArray(value) ? value : {}}
+              onChange={onChange}
+              Text={RichText}
+            />
+          )}
           {q.pairs.map((p) => {
             const current = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
             const picked = current[p.id] || '';
@@ -280,6 +295,8 @@ export function QuestionView({
             return (
               <div
                 key={p.id}
+                data-chq-drop={p.id}
+                data-chq-q={q.id}
                 className={cn(
                   'flex gap-2 rounded-[10px] border px-3 py-2.5',
                   narrow ? 'flex-col' : 'items-center',
@@ -352,6 +369,12 @@ export function QuestionView({
                 />
                 <span className='min-w-0 flex-1'>
                   <RichText text={o.text || '…'} />
+                  {optionFeedback?.[o.id] && (
+                    <span className='mt-1 block text-[13px] text-text-secondary'>
+                      <span aria-hidden='true'>💬 </span>
+                      <RichText text={optionFeedback[o.id]} />
+                    </span>
+                  )}
                 </span>
                 {mark === 'right' && (
                   <span className='chl-mark-right' aria-label='Correct answer'>
@@ -408,6 +431,8 @@ export interface BlockCtx {
   /** A scenario was played to the end, a process was stepped through to its last step, or every card was sorted. */
   onScenarioDone: (block: BlockOf<'scenario'> | BlockOf<'process'> | BlockOf<'sorting'>) => void;
   onMedia: (blockId: string, playing: boolean) => void;
+  /** qbank3: the person's saved survey answers and how to send new ones (absent → the survey can't be sent). */
+  survey?: { saved: Record<string, SavedSurvey>; send: (block: SurveyBlock, answers: SurveyAnswers) => Promise<string> };
 }
 
 function Placeholder({ children }: { children: ReactNode }) {
@@ -837,6 +862,19 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
     case 'table':
     case 'buttons':
       return <Blocks3View block={block} ctx={ctx} kit={BLOCKS3_KIT} />;
+    case 'survey': {
+      const s = ctx.survey;
+
+      return (
+        <SurveyView
+          block={block}
+          saved={s?.saved[block.id]}
+          preview={ctx.preview}
+          onSend={s ? (answers) => s.send(block, answers) : undefined}
+          Text={RichText}
+        />
+      );
+    }
     case 'page_link': {
       const ok = UUID_RE.test(block.view_id) && Boolean(ctx.workspaceId);
 
@@ -1310,6 +1348,7 @@ function KnowledgeCheck({ block, ctx }: { block: BlockOf<'knowledge_check'>; ctx
         value={answer}
         disabled={checked}
         reveal={checked ? correctAnswerOf(q) : undefined}
+        optionFeedback={checked ? pickedFeedback(q, answer) : undefined}
         onChange={(a) => setAnswer(a)}
       />
       {checked ? (
@@ -1320,6 +1359,9 @@ function KnowledgeCheck({ block, ctx }: { block: BlockOf<'knowledge_check'>; ctx
             text={correct ? q.feedback_correct : q.feedback_incorrect}
             explanation={q.explanation}
           />
+          {q.kind === 'fill_blank' && q.case_sensitive === true && (
+            <div className='mt-2 text-xs text-text-tertiary'>Capital letters count.</div>
+          )}
           <div className='mt-3'>
             <Button type='button' size='sm' variant='outline' onClick={() => setChecked(false)}>
               Try again

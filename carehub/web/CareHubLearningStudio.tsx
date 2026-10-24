@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ReactNode } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -26,9 +26,11 @@ import {
   LEARNING_PATH,
   learningNotLive,
   lErrorText,
+  normalizeQuestion,
   plural,
   presetInfo,
   PRESETS,
+  questionChecks,
   starterContent,
   validateContent,
 } from './CareHubLearningApi';
@@ -39,6 +41,7 @@ import { EXAMPLES } from './CareHubLearningExample';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { PasteTextDialog } from './CareHubLearningPaste';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
+import { drawnCount, QuestionBanksPage, QuizDrawsEditor, useBankCopies, withDraws } from './CareHubLearningQbank';
 import {
   AddButton,
   BlockCard,
@@ -62,6 +65,7 @@ import { SaveBlockTemplateButton, SaveLessonTemplateButton, TemplatesSection, us
 import { CareHubModal, ChNote, ChSection, ChSelect } from './CareHubUi';
 
 import type { ExampleCourse } from './CareHubLearningExample';
+import type { BankKit } from './CareHubLearningQbank';
 import type {
   Block,
   BlockType,
@@ -101,6 +105,19 @@ const QUESTION_BUTTONS: { value: QuestionKind; label: string }[] = [
   { value: 'matching', label: 'Matching' },
   ...INTERACT_KIND_OPTIONS,
 ];
+
+/** qbank3: what the Question banks page borrows from the course editor. */
+const BANK_KIT: BankKit = {
+  QuestionEditor,
+  normalizeQuestion,
+  blankQuestion,
+  cloneQuestion,
+  problems: questionChecks,
+  kinds: QUESTION_BUTTONS,
+  errorText: lErrorText,
+  notLive: learningNotLive,
+  transient: isTransientError,
+};
 
 function moveItem<T>(list: T[], from: number, to: number): T[] {
   if (to < 0 || to >= list.length || from === to) return list;
@@ -435,7 +452,19 @@ function StudioRowView({
   );
 }
 
+/** The Studio's start page: the course list, or the Question banks page (`?view=banks`, `&bank=<id>` for one bank). */
 export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+
+  if (params.get('view') === 'banks') {
+    return <QuestionBanksPage workspaceId={workspaceId} bankId={params.get('bank') || ''} studioPath={STUDIO_PATH} kit={BANK_KIT} />;
+  }
+
+  return <StudioCourses workspaceId={workspaceId} />;
+}
+
+function StudioCourses({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<StudioRow[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -535,6 +564,9 @@ export function LearningStudioHome({ workspaceId }: { workspaceId: string }) {
     <div data-testid='carehub-learning-studio'>
       <div className='mb-4 flex flex-wrap items-center gap-2'>
         <div className='min-w-0 flex-1 text-sm text-text-secondary'>Build courses from blocks, preview them, then publish.</div>
+        <Button type='button' variant='outline' onClick={() => navigate(`${STUDIO_PATH}?view=banks`)} data-testid='carehub-learning-banks-open'>
+          Question banks
+        </Button>
         <Button
           type='button'
           variant='outline'
@@ -670,6 +702,9 @@ function PreviewModal({
   onClose: () => void;
 }) {
   const [phone, setPhone] = useState(false);
+  // qbank3: the quiz's bank rows draw from the banks' current questions (published versions carry their own copies).
+  const banked = useBankCopies(workspaceId, content, normalizeQuestion);
+  const missing = banked.failed.map((t) => (t ? `“${t}”` : 'a question bank')).join(', ');
 
   return (
     <CareHubModal title={label} wide='xl' onClose={onClose} testId='carehub-learning-preview'>
@@ -695,7 +730,20 @@ function PreviewModal({
         </div>
       </div>
       <div className={cn(phone ? 'mx-auto w-[375px] max-w-full rounded-[24px] border-[6px] border-border-primary px-3 py-4' : 'w-full')}>
-        <CareHubLearningPlayer workspaceId={workspaceId} courseId={courseId} preview={content} startLessonId={startLessonId} />
+        {banked.loading ? (
+          <div className='py-10 text-center text-sm text-text-tertiary'>Getting the quiz’s questions from the question banks…</div>
+        ) : (
+          <>
+            {missing && (
+              <div className='mb-3'>
+                <ChNote tone='warn'>
+                  Couldn’t load {missing}, so the preview quiz leaves out {banked.failed.length === 1 ? 'its' : 'their'} questions.
+                </ChNote>
+              </div>
+            )}
+            <CareHubLearningPlayer workspaceId={workspaceId} courseId={courseId} preview={banked.content} startLessonId={startLessonId} />
+          </>
+        )}
       </div>
     </CareHubModal>
   );
@@ -936,7 +984,7 @@ function metaOf(c: StudioCourse): Meta {
 
 /** A quiz that's switched on always has at least one question to edit. */
 function withQuizQuestion(c: Content): Content {
-  return c.quiz.enabled && !c.quiz.questions.length ? { ...c, quiz: { ...c.quiz, questions: [blankQuestion('single')] } } : c;
+  return c.quiz.enabled && !c.quiz.questions.length && !(c.quiz.draws || []).length ? { ...c, quiz: { ...c.quiz, questions: [blankQuestion('single')] } } : c;
 }
 
 function lessonName(l: Lesson, i: number) {
@@ -1451,7 +1499,11 @@ function Editor({
   const toggleQuiz = (on: boolean) =>
     update((c) => ({
       ...c,
-      quiz: { ...c.quiz, enabled: on, questions: on && !c.quiz.questions.length ? [blankQuestion('single')] : c.quiz.questions },
+      quiz: {
+        ...c.quiz,
+        enabled: on,
+        questions: on && !c.quiz.questions.length && !(c.quiz.draws || []).length ? [blankQuestion('single')] : c.quiz.questions,
+      },
       settings: {
         ...c.settings,
         completion: on ? (c.settings.completion === 'all_lessons' ? 'all_lessons_and_quiz' : c.settings.completion) : 'all_lessons',
@@ -1611,7 +1663,9 @@ function Editor({
               </Field>
               <Field
                 label='Questions per attempt'
-                hint={`0 = all ${quiz.questions.length}. A smaller number picks a random set each time.`}
+                hint={`0 = all ${quiz.questions.length}. A smaller number picks a random set each time.${
+                  (quiz.draws || []).length ? ' Questions from banks come on top.' : ''
+                }`}
               >
                 <NumberField
                   value={quiz.pool_size}
@@ -1669,6 +1723,14 @@ function Editor({
               </div>
             </div>
           </ChSection>
+          <QuizDrawsEditor
+            workspaceId={workspaceId}
+            draws={quiz.draws || []}
+            ownPerAttempt={quiz.pool_size > 0 ? Math.min(quiz.pool_size, quiz.questions.length) : quiz.questions.length}
+            onChange={(d) => setQuiz((q) => withDraws(q, d))}
+            onOpenBanks={() => navigate(`${STUDIO_PATH}?view=banks`)}
+            errorText={lErrorText}
+          />
         </>
       )}
     </div>
@@ -1754,7 +1816,7 @@ function Editor({
             <div className='flex flex-wrap items-center gap-2 rounded-[10px] bg-fill-content px-3 py-2 text-sm'>
               <span className='min-w-0 flex-1'>
                 {quiz.enabled
-                  ? `Final quiz: ${plural(quiz.questions.length, 'question')}, pass mark ${s.pass_mark}%, ${tries}.`
+                  ? `Final quiz: ${plural(quiz.questions.length + drawnCount(quiz.draws), 'question')}, pass mark ${s.pass_mark}%, ${tries}.`
                   : 'No final quiz.'}
               </span>
               <Button type='button' size='sm' variant='outline' onClick={() => setSelected({ kind: 'quiz' })}>
@@ -1898,7 +1960,7 @@ function Editor({
           selected.kind === 'quiz',
           '📝',
           'Final quiz',
-          quiz.enabled ? plural(quiz.questions.length, 'question') : 'Off',
+          quiz.enabled ? plural(quiz.questions.length + drawnCount(quiz.draws), 'question') : 'Off',
           () => setSelected({ kind: 'quiz' }),
           'carehub-learning-outline-quiz'
         )}

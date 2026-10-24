@@ -38,6 +38,7 @@ import {
 import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
 import { JumpArea } from './CareHubLearningBlocks3';
 import { isInteractKind } from './CareHubLearningInteract';
+import { feedbackMap, ownQuestions, pickedFeedbackList, previewDrawn, uniqueQuestions } from './CareHubLearningQbank';
 import { CourseSearch } from './CareHubLearningPlayer3';
 import { ChNote } from './CareHubUi';
 
@@ -56,6 +57,7 @@ import type {
   QuizResponse,
 } from './CareHubLearningApi';
 import type { BlockCtx } from './CareHubLearningBlocks';
+import type { SavedSurvey, SurveyAnswers, SurveyBlock } from './CareHubLearningQbank';
 
 type View = { kind: 'intro' } | { kind: 'lesson'; lessonId: string } | { kind: 'quiz' } | { kind: 'done' };
 
@@ -167,9 +169,13 @@ function localProgress(
 }
 
 function pickPreviewQuestions(quiz: Quiz, round: number): Question[] {
-  let qs = quiz.questions.slice();
+  // qbank3: the pool picks from the quiz's own questions; each bank row adds its own random set on top.
+  let qs = ownQuestions(quiz.questions);
 
   if (quiz.pool_size > 0 && quiz.pool_size < qs.length) qs = seededShuffle(qs, `pool-${round}`).slice(0, quiz.pool_size);
+  const drawn = previewDrawn(quiz.questions, quiz.draws, round, seededShuffle);
+
+  if (drawn.length) qs = uniqueQuestions([...qs, ...drawn]);
   if (quiz.shuffle) qs = seededShuffle(qs, `order-${round}`);
   return qs;
 }
@@ -197,14 +203,19 @@ function gradeLocally(course: PlayCourse, questions: Question[], answers: Record
     passed,
     attempts_used: used,
     attempts_left: left,
-    results: graded.map(({ q, ok }) => ({
-      question_id: q.id,
-      correct: ok,
-      earned: ok ? q.points : 0,
-      points: q.points,
-      feedback: ok ? q.feedback_correct : q.feedback_incorrect,
-      ...(show ? { correct_answer: correctAnswerOf(q), explanation: q.explanation || undefined } : {}),
-    })),
+    results: graded.map(({ q, ok }) => {
+      const picked = show ? pickedFeedbackList(q, answers[q.id]) : undefined;
+
+      return {
+        question_id: q.id,
+        correct: ok,
+        earned: ok ? q.points : 0,
+        points: q.points,
+        feedback: ok ? q.feedback_correct : q.feedback_incorrect,
+        ...(show ? { correct_answer: correctAnswerOf(q), explanation: q.explanation || undefined } : {}),
+        ...(picked ? { option_feedback: picked } : {}),
+      };
+    }),
     enrollment: null,
   };
 }
@@ -477,7 +488,10 @@ function LessonView({
           .slice(0, gateIndex)
           .filter(
             (b) =>
-              (b.type === 'knowledge_check' && !ctx.kc[b.id]) || ((b.type === 'scenario' || b.type === 'sorting') && !ctx.done.has(b.id))
+              (b.type === 'knowledge_check' && !ctx.kc[b.id]) ||
+              ((b.type === 'scenario' || b.type === 'sorting') && !ctx.done.has(b.id)) ||
+              // qbank3: a survey counts once it's sent (answers kept after a progress reset count too).
+              (b.type === 'survey' && !ctx.done.has(b.id) && !ctx.survey?.saved[b.id])
           )
       : [];
 
@@ -509,7 +523,9 @@ function LessonView({
             <div className='text-xs text-text-tertiary'>
               {waitingOn.some((b) => b.type === 'scenario' || b.type === 'sorting')
                 ? 'Finish the practice above to continue.'
-                : 'Answer the question above to continue.'}
+                : waitingOn.some((b) => b.type === 'knowledge_check')
+                  ? 'Answer the question above to continue.'
+                  : 'Send the survey above to continue.'}
             </div>
           )}
         </div>
@@ -719,6 +735,7 @@ function QuizView({
                 value={answers[q.id]}
                 disabled={sending || Boolean(result)}
                 reveal={r ? r.correct_answer : undefined}
+                optionFeedback={r ? feedbackMap(r.option_feedback) : undefined}
                 onChange={(a) => setAnswers((m) => ({ ...m, [q.id]: a }))}
               />
               {result && (
@@ -734,6 +751,9 @@ function QuizView({
                   )}
                   {r && !r.correct && r.correct_answer !== undefined && q.kind !== 'matching' && !isInteractKind(q.kind) && (
                     <div className='mt-1 text-text-secondary'>Correct answer: {answerText(q, r.correct_answer) || '—'}</div>
+                  )}
+                  {r && q.kind === 'fill_blank' && q.case_sensitive === true && (
+                    <div className='mt-1 text-xs text-text-tertiary'>Capital letters count.</div>
                   )}
                   {r && r.explanation && (
                     <div className='mt-1 text-text-secondary'>
@@ -1013,6 +1033,7 @@ function PlayerShell({
     initialView(initialCourse, isPreview && startLessonId ? previewEnrollment() : initialEnrollment, isPreview, startLessonId)
   );
   const [extraBlocks, setExtraBlocks] = useState<string[]>([]);
+  const [surveys, setSurveys] = useState<Record<string, SavedSurvey>>(() => initialCourse.surveys || {});
   const [extraKc, setExtraKc] = useState<Record<string, KcRecord>>({});
   const [extraLessons, setExtraLessons] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
@@ -1392,11 +1413,48 @@ function PlayerShell({
   const lessonOfBlock = (blockId: string) =>
     lessons.find((l) => l.blocks.some((b) => b.id === blockId))?.id || (view.kind === 'lesson' ? view.lessonId : '');
 
+  // qbank3: survey answers go in their own request straight away (not through the offline queue), after any
+  // sending already under way. Resolves to '' when saved, or the reason they weren't.
+  const sendSurvey = (block: SurveyBlock, answers: SurveyAnswers): Promise<string> => {
+    const keep = (e: Enrollment | null) => {
+      if (!mounted.current) return;
+      setSurveys((m) => ({ ...m, [block.id]: { answers, updated_ms: Date.now() } }));
+      setExtraBlocks((s) => (s.includes(block.id) ? s : [...s, block.id]));
+      if (e) setEnr(e);
+    };
+
+    if (isPreview) {
+      keep(null);
+      return Promise.resolve('');
+    }
+
+    const event: LearnEvent = { kind: 'survey_answer', lesson_id: lessonOfBlock(block.id), block_id: block.id, data: { answers }, ts_ms: Date.now() };
+    let reason = '';
+    const run = async (): Promise<FlushResult> => {
+      try {
+        const res = await lapi.progress(workspaceId, courseId, [event], positionRef.current);
+        const no = res.rejected.find((r) => r.i === 0) || res.rejected[0];
+
+        if (no) reason = no.reason.trim() || 'Couldn’t send your answers. Please try again.';
+        else keep(res.enrollment);
+      } catch (e) {
+        reason = isTransientError(e) ? 'Couldn’t send your answers — check your connection and try again.' : lErrorText(e);
+      }
+
+      return FLUSH_OK;
+    };
+    const next = chain.current.then(run, run);
+
+    chain.current = next.catch(() => FLUSH_OK);
+    return next.then(() => reason);
+  };
+
   const ctx: BlockCtx = {
     workspaceId,
     preview: isPreview,
     kc: kcMap,
     done: doneBlocks,
+    survey: { saved: surveys, send: sendSurvey },
     onKcAnswer: (block, answer, correct) => {
       const now = Date.now();
 

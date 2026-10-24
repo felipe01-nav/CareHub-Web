@@ -1361,6 +1361,7 @@ EXTRA_FILES[HERE / "web" / "CareHubLearningPlayer3.tsx"] = "src/components/careh
 EXTRA_FILES[HERE / "web" / "CareHubLearningOverview.tsx"] = "src/components/carehub/CareHubLearningOverview.tsx"  # Reports → Overview tab
 EXTRA_FILES[HERE / "web" / "CareHubLearningTemplates.tsx"] = "src/components/carehub/CareHubLearningTemplates.tsx"  # Studio → block templates
 EXTRA_FILES[HERE / "web" / "CareHubLearningDrafts.tsx"] = "src/components/carehub/CareHubLearningDrafts.tsx"  # review links + draft comments
+EXTRA_FILES[HERE / "web" / "CareHubLearningQbank.tsx"] = "src/components/carehub/CareHubLearningQbank.tsx"  # surveys, question banks, drag matching
 
 if __name__ == "__main__":
     sys.exit(main())
