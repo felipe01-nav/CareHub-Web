@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 
 import { CH_API, chCall, formatWhen } from './CareHubCore';
 import { correctAnswerOf, LEARNING_PATH, learningNotLive, lErrorText, normalizeContent, plural } from './CareHubLearningApi';
+import { focusSoon } from './CareHubLearningA11y';
 import { BlockView, Chip, NarrowContext, QuestionView, RichText } from './CareHubLearningBlocks';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
 import { BLOCK_INFO } from './CareHubLearningStudioBlocks';
@@ -395,6 +396,19 @@ export function CommentBox({
   );
 }
 
+const CONTROLS = 'a[href], button, input, select, textarea, [tabindex]';
+const usable = (el: HTMLElement) => el.isConnected && el.tabIndex >= 0 && !el.matches(':disabled') && el.getClientRects().length > 0;
+
+/** For focusSoon: once `item` has gone, the next control after where it was (else the one before), inside its dialog if any. */
+function controlAfter(item: Element) {
+  const box = item.closest('[role=dialog]') || document.body;
+  const all = Array.from(box.querySelectorAll<HTMLElement>(CONTROLS)).filter((el) => !item.contains(el));
+  const next = all.filter((el) => item.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const order = [...next, ...all.filter((el) => !next.includes(el)).reverse()];
+
+  return () => (item.isConnected ? null : order.find(usable));
+}
+
 function DeleteButton({ c, acts, withReplies, onProblem }: { c: DraftComment; acts: CommentActs; withReplies: boolean; onProblem: (text: string) => void }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -415,7 +429,10 @@ function DeleteButton({ c, acts, withReplies, onProblem }: { c: DraftComment; ac
         type='button'
         disabled={busy}
         className={cn(quietButton, 'text-text-error')}
-        onClick={async () => {
+        onClick={async (e) => {
+          const item = e.currentTarget.closest('[data-comment]');
+          const next = item ? controlAfter(item) : null;
+
           setBusy(true);
           const err = await acts.remove(c);
 
@@ -424,6 +441,9 @@ function DeleteButton({ c, acts, withReplies, onProblem }: { c: DraftComment; ac
             setAsking(false);
             onProblem(err);
             refocus(ref);
+          } else if (next) {
+            // The comment took this button with it: focus the next control (else the one before), not the top of the page.
+            focusSoon(next);
           }
         }}
       >
@@ -462,6 +482,7 @@ export function ThreadView({ t, acts }: { t: DraftThread; acts: CommentActs }) {
       className={cn('flex min-w-0 flex-col gap-2 rounded-[10px] border border-border-primary p-3', t.done && 'bg-fill-content-hover')}
       aria-label={`Comment by ${t.name}`}
       data-testid='carehub-draft-thread'
+      data-comment
     >
       <div className='flex flex-col gap-1'>
         <div className='flex flex-wrap items-center gap-2'>
@@ -473,7 +494,7 @@ export function ThreadView({ t, acts }: { t: DraftThread; acts: CommentActs }) {
       {t.replies.length > 0 && (
         <div className='flex flex-col gap-2 border-l-2 border-border-primary pl-3'>
           {t.replies.map((r) => (
-            <div key={r.id} className='flex min-w-0 flex-col gap-1'>
+            <div key={r.id} className='flex min-w-0 flex-col gap-1' data-comment>
               <Who c={r} />
               <CommentText text={r.text} />
               <div>

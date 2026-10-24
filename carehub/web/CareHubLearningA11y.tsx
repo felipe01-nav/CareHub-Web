@@ -1,5 +1,5 @@
 // CareHub Learning: small keyboard and screen reader helpers (WCAG 2.1 AA) shared by the Learning screens.
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
@@ -49,11 +49,68 @@ export function learningTitle(...parts: string[]) {
   return [...parts.map((p) => p.trim()).filter(Boolean), 'Learning', 'Care Hub'].join(' · ');
 }
 
-/** Sets the browser tab title for the screen that's open (WCAG 2.4.2). null leaves the title alone. */
+/**
+ * Sets the browser tab title for the screen that's open (WCAG 2.4.2) and puts the previous one back when the screen
+ * closes, unless something else has changed the title since. null leaves the title alone.
+ */
 export function usePageTitle(title: string | null) {
   useEffect(() => {
-    if (title) document.title = title;
+    if (!title) return undefined;
+    const before = document.title;
+
+    document.title = title;
+    return () => {
+      if (document.title === title) document.title = before;
+    };
   }, [title]);
+}
+
+/**
+ * Keeps keyboard focus in a list whose rows move or go away (WCAG 2.4.3): moving a row to the top or bottom disables
+ * the arrow that was pressed, and removing a row takes its buttons with it. Give the controls `ref={reg(key)}`, then
+ * call `later(...keys)` (or `moved` / `removed`) just before changing the list: after the next render, the first of
+ * those that is still on the page and can be used gets focus (for a box, its first control). A request that no render
+ * picks up within a second is dropped.
+ */
+export function useRefocus() {
+  const els = useRef(new Map<string, HTMLElement>());
+  const want = useRef<{ keys: string[]; at: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const asked = want.current;
+
+    if (!asked) return;
+    want.current = null;
+    if (Date.now() - asked.at > 1000) return;
+    for (const key of asked.keys) {
+      const el = els.current.get(key);
+      const to = !el?.isConnected ? null : el.matches(FOCUSABLE) ? el : firstControl(el);
+
+      if (to && !to.matches(':disabled')) {
+        if (document.activeElement !== to) to.focus();
+        return;
+      }
+    }
+  });
+
+  return useMemo(() => {
+    const later = (...keys: string[]) => {
+      want.current = { keys, at: Date.now() };
+    };
+
+    return {
+      reg: (key: string) => (el: HTMLElement | null) => {
+        if (el) els.current.set(key, el);
+        else els.current.delete(key);
+      },
+      later,
+      /** After ↑/↓ on row `id` (buttons `up:<id>` / `down:<id>`): the arrow pressed, or the other one at the end. */
+      moved: (id: string, delta: number) => later(`${delta < 0 ? 'up' : 'down'}:${id}`, `${delta < 0 ? 'down' : 'up'}:${id}`),
+      /** Before row `index` of `rows` goes: the same control (`<part>:<id>`) on the next row, else the previous one, else `fallback`. */
+      removed: (part: string, rows: { id: string }[], index: number, ...fallback: string[]) =>
+        later(...[rows[index + 1], rows[index - 1]].filter(Boolean).map((r) => `${part}:${r.id}`), ...fallback),
+    };
+  }, []);
 }
 
 /**

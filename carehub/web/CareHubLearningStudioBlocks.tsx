@@ -2,13 +2,14 @@
 // kind of block and question.
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import type { DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { DragEvent, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react';
 
 import { executeAPIRequest, getAxios } from '@/application/services/js-services/http/core';
 import { cn } from '@/lib/utils';
 
 import { chErrorText } from './CareHubCore';
 import { clampInt, EMBED_SITES, embedKind, newId, setQuestionKind, urlAllowed } from './CareHubLearningApi';
+import { useRefocus } from './CareHubLearningA11y';
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
 import { BLOCKS3_INFO, Blocks3Editor, LessonLinkWrap, LinkBlockContext } from './CareHubLearningBlocks3';
 import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
@@ -273,15 +274,19 @@ export function IconButton({
   disabled,
   children,
   danger,
+  buttonRef,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   children: ReactNode;
   danger?: boolean;
+  /** For putting focus back on it after its list changes (useRefocus). */
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   return (
     <button
+      ref={buttonRef}
       type='button'
       aria-label={label}
       title={label}
@@ -297,9 +302,20 @@ export function IconButton({
   );
 }
 
-export function AddButton({ onClick, children, disabled }: { onClick: () => void; children: ReactNode; disabled?: boolean }) {
+export function AddButton({
+  onClick,
+  children,
+  disabled,
+  buttonRef,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  disabled?: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
+}) {
   return (
     <button
+      ref={buttonRef}
       type='button'
       disabled={disabled}
       onClick={onClick}
@@ -931,6 +947,7 @@ export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange:
   };
   const setPair = (i: number, patch: Partial<QPair>) => set({ pairs: q.pairs.map((p, j) => (j === i ? { ...p, ...patch } : p)) });
   const group = `q-${q.id}`;
+  const refocus = useRefocus();
 
   return (
     <div className='flex flex-col gap-3'>
@@ -967,12 +984,22 @@ export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange:
                 onChange={(e) => markCorrect(i, e.target.checked)}
               />
               <TextLine value={o.text} onChange={(v) => setOption(i, { text: v })} placeholder={`Answer ${i + 1}`} ariaLabel={`Answer ${i + 1}`} />
-              <IconButton label='Remove answer' danger disabled={q.options.length <= 2} onClick={() => set({ options: q.options.filter((_, j) => j !== i) })}>
+              <IconButton
+                buttonRef={refocus.reg(`rm:${o.id}`)}
+                label='Remove answer'
+                danger
+                disabled={q.options.length <= 2}
+                onClick={() => {
+                  refocus.removed('rm', q.options, i, 'add-answer');
+                  set({ options: q.options.filter((_, j) => j !== i) });
+                }}
+              >
                 ×
               </IconButton>
             </div>
           ))}
           <AddButton
+            buttonRef={refocus.reg('add-answer')}
             disabled={q.options.length >= 10}
             onClick={() => set({ options: [...q.options, { id: newId('o'), text: '', correct: false }] })}
           >
@@ -1011,12 +1038,25 @@ export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange:
                 →
               </span>
               <TextLine value={p.right} onChange={(v) => setPair(i, { right: v })} placeholder='…goes with this' ariaLabel={`Pair ${i + 1}, right`} className='flex-1' />
-              <IconButton label='Remove pair' danger disabled={q.pairs.length <= 2} onClick={() => set({ pairs: q.pairs.filter((_, j) => j !== i) })}>
+              <IconButton
+                buttonRef={refocus.reg(`rm:${p.id}`)}
+                label='Remove pair'
+                danger
+                disabled={q.pairs.length <= 2}
+                onClick={() => {
+                  refocus.removed('rm', q.pairs, i, 'add-pair');
+                  set({ pairs: q.pairs.filter((_, j) => j !== i) });
+                }}
+              >
                 ×
               </IconButton>
             </div>
           ))}
-          <AddButton disabled={q.pairs.length >= 10} onClick={() => set({ pairs: [...q.pairs, { id: newId('p'), left: '', right: '' }] })}>
+          <AddButton
+            buttonRef={refocus.reg('add-pair')}
+            disabled={q.pairs.length >= 10}
+            onClick={() => set({ pairs: [...q.pairs, { id: newId('p'), left: '', right: '' }] })}
+          >
             Add a pair
           </AddButton>
         </div>
@@ -1057,6 +1097,11 @@ function ItemsEditor({
   textPlaceholder?: string;
 }) {
   const set = (i: number, patch: Partial<TextItem>) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
+  const refocus = useRefocus();
+  const moveTo = (i: number, delta: number) => {
+    refocus.moved(items[i].id, delta);
+    onChange(move(items, i, i + delta));
+  };
 
   return (
     <div className='flex flex-col gap-2'>
@@ -1064,20 +1109,33 @@ function ItemsEditor({
         <div key={it.id} className='flex flex-col gap-1.5 rounded-[10px] border border-border-primary p-2.5'>
           <div className='flex items-center gap-1'>
             <TextLine value={it.title} onChange={(v) => set(i, { title: v })} placeholder={`${noun} ${i + 1} title`} ariaLabel={`${noun} ${i + 1} title`} />
-            <IconButton label='Move up' disabled={i === 0} onClick={() => onChange(move(items, i, i - 1))}>
+            <IconButton buttonRef={refocus.reg(`up:${it.id}`)} label='Move up' disabled={i === 0} onClick={() => moveTo(i, -1)}>
               ↑
             </IconButton>
-            <IconButton label='Move down' disabled={i === items.length - 1} onClick={() => onChange(move(items, i, i + 1))}>
+            <IconButton buttonRef={refocus.reg(`down:${it.id}`)} label='Move down' disabled={i === items.length - 1} onClick={() => moveTo(i, 1)}>
               ↓
             </IconButton>
-            <IconButton label={`Remove ${noun.toLowerCase()}`} danger disabled={items.length <= min} onClick={() => onChange(items.filter((_, j) => j !== i))}>
+            <IconButton
+              buttonRef={refocus.reg(`rm:${it.id}`)}
+              label={`Remove ${noun.toLowerCase()}`}
+              danger
+              disabled={items.length <= min}
+              onClick={() => {
+                refocus.removed('rm', items, i, 'add');
+                onChange(items.filter((_, j) => j !== i));
+              }}
+            >
               ×
             </IconButton>
           </div>
           <TextBox value={it.text} rows={3} onChange={(v) => set(i, { text: v })} placeholder={textPlaceholder} ariaLabel={`${noun} ${i + 1} text`} />
         </div>
       ))}
-      <AddButton disabled={items.length >= max} onClick={() => onChange([...items, { id: newId('i'), title: '', text: '' }])}>
+      <AddButton
+        buttonRef={refocus.reg('add')}
+        disabled={items.length >= max}
+        onClick={() => onChange([...items, { id: newId('i'), title: '', text: '' }])}
+      >
         Add a {noun.toLowerCase()}
       </AddButton>
     </div>
@@ -1086,6 +1144,11 @@ function ItemsEditor({
 
 function CardsEditor({ cards, onChange }: { cards: FlashCard[]; onChange: (cards: FlashCard[]) => void }) {
   const set = (i: number, patch: Partial<FlashCard>) => onChange(cards.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  const refocus = useRefocus();
+  const moveTo = (i: number, delta: number) => {
+    refocus.moved(cards[i].id, delta);
+    onChange(move(cards, i, i + delta));
+  };
 
   return (
     <div className='flex flex-col gap-2'>
@@ -1093,13 +1156,22 @@ function CardsEditor({ cards, onChange }: { cards: FlashCard[]; onChange: (cards
         <div key={c.id} className='flex flex-col gap-1.5 rounded-[10px] border border-border-primary p-2.5'>
           <div className='flex items-center gap-1'>
             <span className='flex-1 text-xs font-medium text-text-secondary'>Card {i + 1}</span>
-            <IconButton label='Move up' disabled={i === 0} onClick={() => onChange(move(cards, i, i - 1))}>
+            <IconButton buttonRef={refocus.reg(`up:${c.id}`)} label='Move up' disabled={i === 0} onClick={() => moveTo(i, -1)}>
               ↑
             </IconButton>
-            <IconButton label='Move down' disabled={i === cards.length - 1} onClick={() => onChange(move(cards, i, i + 1))}>
+            <IconButton buttonRef={refocus.reg(`down:${c.id}`)} label='Move down' disabled={i === cards.length - 1} onClick={() => moveTo(i, 1)}>
               ↓
             </IconButton>
-            <IconButton label='Remove card' danger disabled={cards.length <= 1} onClick={() => onChange(cards.filter((_, j) => j !== i))}>
+            <IconButton
+              buttonRef={refocus.reg(`rm:${c.id}`)}
+              label='Remove card'
+              danger
+              disabled={cards.length <= 1}
+              onClick={() => {
+                refocus.removed('rm', cards, i, 'add');
+                onChange(cards.filter((_, j) => j !== i));
+              }}
+            >
               ×
             </IconButton>
           </div>
@@ -1109,7 +1181,11 @@ function CardsEditor({ cards, onChange }: { cards: FlashCard[]; onChange: (cards
           </div>
         </div>
       ))}
-      <AddButton disabled={cards.length >= 30} onClick={() => onChange([...cards, { id: newId('c'), front: '', back: '' }])}>
+      <AddButton
+        buttonRef={refocus.reg('add')}
+        disabled={cards.length >= 30}
+        onClick={() => onChange([...cards, { id: newId('c'), front: '', back: '' }])}
+      >
         Add a card
       </AddButton>
     </div>
@@ -1117,20 +1193,41 @@ function CardsEditor({ cards, onChange }: { cards: FlashCard[]; onChange: (cards
 }
 
 function ListItemsEditor({ items, onChange }: { items: string[]; onChange: (items: string[]) => void }) {
+  // Rows are keyed by position, so focus keys use positions too.
+  const refocus = useRefocus();
+
   return (
     <div className='flex flex-col gap-1.5'>
       {items.map((it, i) => (
-        <div key={i} className='flex items-center gap-1'>
+        <div key={i} ref={refocus.reg(`row:${i}`)} className='flex items-center gap-1'>
           <TextLine value={it} onChange={(v) => onChange(items.map((x, j) => (j === i ? v : x)))} placeholder={`Item ${i + 1}`} ariaLabel={`Item ${i + 1}`} />
-          <IconButton label='Move up' disabled={i === 0} onClick={() => onChange(move(items, i, i - 1))}>
+          <IconButton
+            buttonRef={refocus.reg(`up:${i}`)}
+            label='Move up'
+            disabled={i === 0}
+            onClick={() => {
+              // In the top place there's no ↑ any more: go to the item's text, never to Remove.
+              refocus.later(`up:${i - 1}`, `row:${i - 1}`);
+              onChange(move(items, i, i - 1));
+            }}
+          >
             ↑
           </IconButton>
-          <IconButton label='Remove item' danger disabled={items.length <= 1} onClick={() => onChange(items.filter((_, j) => j !== i))}>
+          <IconButton
+            buttonRef={refocus.reg(`rm:${i}`)}
+            label='Remove item'
+            danger
+            disabled={items.length <= 1}
+            onClick={() => {
+              refocus.later(`rm:${i}`, `rm:${i - 1}`, 'add');
+              onChange(items.filter((_, j) => j !== i));
+            }}
+          >
             ×
           </IconButton>
         </div>
       ))}
-      <AddButton disabled={items.length >= 50} onClick={() => onChange([...items, ''])}>
+      <AddButton buttonRef={refocus.reg('add')} disabled={items.length >= 50} onClick={() => onChange([...items, ''])}>
         Add an item
       </AddButton>
     </div>
@@ -1156,12 +1253,14 @@ function ScenarioEditor({ block, onChange }: { block: BlockOf<'scenario'>; onCha
   const setChoice = (si: number, ci: number, patch: Partial<ScenarioChoice>) =>
     setStep(si, { choices: block.steps[si].choices.map((c, j) => (j === ci ? { ...c, ...patch } : c)) });
   const nextOptions = [{ value: '', label: 'End the scenario' }, ...block.steps.map((s) => ({ value: s.id, label: stepName(block.steps, s.id) }))];
+  const refocus = useRefocus();
   const removeStep = (i: number) => {
     const id = block.steps[i].id;
     const steps = block.steps
       .filter((_, j) => j !== i)
       .map((s) => ({ ...s, choices: s.choices.map((c) => (c.next === id ? { ...c, next: '' } : c)) }));
 
+    refocus.removed('rm', block.steps, i, 'add-step');
     set({ steps, start: block.start === id ? steps[0]?.id || '' : block.start });
   };
   const addStep = () => {
@@ -1195,7 +1294,13 @@ function ScenarioEditor({ block, onChange }: { block: BlockOf<'scenario'>; onCha
               Step {si + 1}
               {block.start === s.id ? ' · first' : ''}
             </span>
-            <IconButton label='Remove step' danger disabled={block.steps.length <= 1} onClick={() => removeStep(si)}>
+            <IconButton
+              buttonRef={refocus.reg(`rm:${s.id}`)}
+              label='Remove step'
+              danger
+              disabled={block.steps.length <= 1}
+              onClick={() => removeStep(si)}
+            >
               ×
             </IconButton>
           </div>
@@ -1206,10 +1311,14 @@ function ScenarioEditor({ block, onChange }: { block: BlockOf<'scenario'>; onCha
               <div className='flex items-center gap-1'>
                 <TextLine value={c.text} onChange={(v) => setChoice(si, ci, { text: v })} placeholder={`Choice ${ci + 1}: what the learner says or does`} ariaLabel={`Step ${si + 1} choice ${ci + 1}`} />
                 <IconButton
+                  buttonRef={refocus.reg(`rm:${c.id}`)}
                   label='Remove choice'
                   danger
                   disabled={s.choices.length <= 1}
-                  onClick={() => setStep(si, { choices: s.choices.filter((_, j) => j !== ci) })}
+                  onClick={() => {
+                    refocus.removed('rm', s.choices, ci, `add:${s.id}`);
+                    setStep(si, { choices: s.choices.filter((_, j) => j !== ci) });
+                  }}
                 >
                   ×
                 </IconButton>
@@ -1225,6 +1334,7 @@ function ScenarioEditor({ block, onChange }: { block: BlockOf<'scenario'>; onCha
             </div>
           ))}
           <AddButton
+            buttonRef={refocus.reg(`add:${s.id}`)}
             disabled={s.choices.length >= 6}
             onClick={() => setStep(si, { choices: [...s.choices, { id: newId('ch'), text: '', feedback: '', good: false, next: '' }] })}
           >
@@ -1232,7 +1342,7 @@ function ScenarioEditor({ block, onChange }: { block: BlockOf<'scenario'>; onCha
           </AddButton>
         </div>
       ))}
-      <AddButton disabled={block.steps.length >= 20} onClick={addStep}>
+      <AddButton buttonRef={refocus.reg('add-step')} disabled={block.steps.length >= 20} onClick={addStep}>
         Add a step
       </AddButton>
     </div>
@@ -1639,6 +1749,12 @@ export function BlockCard({
   extra?: ReactNode;
 }) {
   const info = BLOCK_INFO[block.type];
+  // Moving to the top or bottom disables the arrow pressed: focus the other one (WCAG 2.4.3).
+  const refocus = useRefocus();
+  const moveBy = (delta: number) => {
+    refocus.moved(block.id, delta);
+    onMove(delta);
+  };
 
   return (
     <div
@@ -1654,10 +1770,10 @@ export function BlockCard({
           {info.emoji}
         </span>
         <span className='min-w-0 flex-1 truncate text-xs font-semibold text-text-secondary'>{info.label}</span>
-        <IconButton label='Move up' disabled={index === 0} onClick={() => onMove(-1)}>
+        <IconButton buttonRef={refocus.reg(`up:${block.id}`)} label='Move up' disabled={index === 0} onClick={() => moveBy(-1)}>
           ↑
         </IconButton>
-        <IconButton label='Move down' disabled={index >= count - 1} onClick={() => onMove(1)}>
+        <IconButton buttonRef={refocus.reg(`down:${block.id}`)} label='Move down' disabled={index >= count - 1} onClick={() => moveBy(1)}>
           ↓
         </IconButton>
         <IconButton label='Duplicate' onClick={onDuplicate}>
