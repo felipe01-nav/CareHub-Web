@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 import { blocks3SearchText, JumpContext } from './CareHubLearningBlocks3';
+import { withBlocks4Search } from './CareHubLearningBlocks4';
 import { chInputClass } from './CareHubUi';
 
 import type { Block, Lesson } from './CareHubLearningApi';
@@ -895,7 +896,7 @@ export function CourseSearch({ lessons, shownBlocks, className }: CourseSearchPr
           lessons={lessons}
           isLocked={(lessonId) => jump.locked({ lesson_id: lessonId, block_id: '' })}
           isBehindContinue={isBehindContinue}
-          extraText={blocks3SearchText}
+          extraText={withBlocks4Search(blocks3SearchText)}
           query={query}
           onQuery={setQuery}
           onClose={close}
