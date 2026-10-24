@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 
 import { tzMinutesEast, UUID_RE } from './CareHubCore';
 import { lErrorText, plural, statusInfo } from './CareHubLearningApi';
+import { learningTitle, usePageTitle, useRefocus } from './CareHubLearningA11y';
 import {
   AssignDialog,
   AssignNav,
@@ -80,6 +81,8 @@ const PATHS_EXPLAINER =
 const NAME_NEEDED = 'Give the path a name (up to 80 characters).';
 const DESCRIPTION_TOO_LONG = 'Keep the description to 500 characters or fewer.';
 const COURSES_NEEDED = 'A learning path needs 2 to 20 different courses.';
+/** Why an archived course in a path is shown but not taken (a tooltip, and hidden text for screen readers). */
+const LEFT_OUT = 'Left out of the path until it’s unarchived';
 
 function orderText(inOrder: boolean) {
   return inOrder ? 'In this order' : 'Any order';
@@ -95,14 +98,17 @@ function SmallIconButton({
   onClick,
   disabled,
   children,
+  buttonRef,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   children: string;
+  buttonRef?: (el: HTMLButtonElement | null) => void;
 }) {
   return (
     <button
+      ref={buttonRef}
       type='button'
       aria-label={label}
       title={label}
@@ -152,6 +158,8 @@ function PathEditorDialog({
     [workspaceId, canBuild, canReports]
   );
   const { data: courses, error: loadError, reload } = useLoad(load);
+  // Keyboard focus stays in the course list when a row moves to the top or bottom, goes away or is added.
+  const refocus = useRefocus();
 
   // Titles for the path's own courses (from its page) and every course that can be assigned.
   const known = useMemo(() => {
@@ -164,6 +172,7 @@ function PathEditorDialog({
   const choices = (courses || []).filter((c) => c.status === 'published' && !ids.includes(c.id));
   const full = ids.length >= MAX_PATH_COURSES;
   const coursesChanged = Boolean(editing && ids.join(',') !== editing.course_ids.join(','));
+  const rows = ids.map((id) => ({ id }));
 
   const move = (i: number, by: -1 | 1) =>
     setIds((list) => {
@@ -177,6 +186,8 @@ function PathEditorDialog({
     });
   const add = () => {
     if (!pick || ids.includes(pick) || full) return;
+    // The Add button turns off: back to the course picker, else the new row's ↑.
+    refocus.later('pick', `up:${pick}`, 'title');
     setIds((list) => [...list, pick]);
     setPick('');
     setError('');
@@ -258,6 +269,7 @@ function PathEditorDialog({
             onChange={(e) => setTitle(e.target.value)}
             className={cn(chInputClass, 'w-full')}
             autoFocus
+            ref={refocus.reg('title')}
             data-testid='carehub-learning-path-title'
           />
         </div>
@@ -299,14 +311,42 @@ function PathEditorDialog({
                   <li key={id} className={cn('flex items-center gap-1.5 py-1 pl-2.5 pr-1', i > 0 && 'border-t border-border-primary')}>
                     <span className='w-6 shrink-0 text-xs tabular-nums text-text-tertiary'>{i + 1}.</span>
                     <span className='min-w-0 flex-1 break-words text-sm'>{name}</span>
-                    {c?.status === 'archived' && <Chip title='Left out of the path until it’s unarchived'>Archived</Chip>}
-                    <SmallIconButton label={`Move “${name}” up`} disabled={i === 0} onClick={() => move(i, -1)}>
+                    {c?.status === 'archived' && (
+                      <>
+                        <Chip title={LEFT_OUT}>Archived</Chip>
+                        <span className='sr-only'>{` ${LEFT_OUT}.`}</span>
+                      </>
+                    )}
+                    <SmallIconButton
+                      label={`Move “${name}” up`}
+                      disabled={i === 0}
+                      onClick={() => {
+                        refocus.moved(id, -1);
+                        move(i, -1);
+                      }}
+                      buttonRef={refocus.reg(`up:${id}`)}
+                    >
                       ↑
                     </SmallIconButton>
-                    <SmallIconButton label={`Move “${name}” down`} disabled={i === ids.length - 1} onClick={() => move(i, 1)}>
+                    <SmallIconButton
+                      label={`Move “${name}” down`}
+                      disabled={i === ids.length - 1}
+                      onClick={() => {
+                        refocus.moved(id, 1);
+                        move(i, 1);
+                      }}
+                      buttonRef={refocus.reg(`down:${id}`)}
+                    >
                       ↓
                     </SmallIconButton>
-                    <SmallIconButton label={`Remove “${name}”`} onClick={() => remove(id)}>
+                    <SmallIconButton
+                      label={`Remove “${name}”`}
+                      onClick={() => {
+                        refocus.removed('rm', rows, i, 'pick', 'title');
+                        remove(id);
+                      }}
+                      buttonRef={refocus.reg(`rm:${id}`)}
+                    >
                       ×
                     </SmallIconButton>
                   </li>
@@ -324,6 +364,7 @@ function PathEditorDialog({
             ) : choices.length ? (
               <>
                 <select
+                  ref={refocus.reg('pick')}
                   aria-label='Course to add'
                   className={cn(chInputClass, 'min-w-0 flex-1 pr-7')}
                   value={pick}
@@ -527,9 +568,12 @@ function PathRow({
       {canAssign && (
         <span className='w-[76px] shrink-0 text-right'>
           {p.archived ? (
-            <span className='text-xs text-text-tertiary' title='Unarchive it before assigning it.'>
-              Can’t assign
-            </span>
+            <>
+              <span className='text-xs text-text-tertiary' title='Unarchive it before assigning it.'>
+                Can’t assign
+              </span>
+              <span className='sr-only'> Unarchive it before assigning it.</span>
+            </>
           ) : (
             <Button type='button' size='sm' variant='outline' onClick={onAssign} data-testid='carehub-learning-path-assign-open'>
               Assign
@@ -542,6 +586,7 @@ function PathRow({
 }
 
 function PathsListView({ workspaceId, perms }: { workspaceId: string; perms: AssignPerms }) {
+  usePageTitle(learningTitle('Paths', 'Assign'));
   const navigate = useNavigate();
   const { canAssign } = perms;
   const load = useCallback(() => aapi.paths(workspaceId), [workspaceId]);
@@ -755,6 +800,7 @@ function PathDetailView({ workspaceId, pathId, perms }: { workspaceId: string; p
     [data]
   );
 
+  usePageTitle(learningTitle(data?.path.title || '', 'Paths', 'Assign'));
   if (error && !data) {
     return (
       <>
@@ -909,7 +955,12 @@ function PathDetailView({ workspaceId, pathId, perms }: { workspaceId: string; p
                 >
                   {c.title}
                 </button>
-                {c.status === 'archived' && <Chip title='Left out of the path until it’s unarchived'>Archived</Chip>}
+                {c.status === 'archived' && (
+                  <>
+                    <Chip title={LEFT_OUT}>Archived</Chip>
+                    <span className='sr-only'>{` ${LEFT_OUT}.`}</span>
+                  </>
+                )}
               </li>
             ))}
           </ol>
