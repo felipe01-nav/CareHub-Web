@@ -72,6 +72,9 @@ export interface ReportProgress {
   last_ms: number;
   completed_ms: number | null;
   ack_ms: number | null;
+  /** When their finish runs out (the course needs renewing); null = never. */
+  expires_ms: number | null;
+  expired: boolean;
 }
 
 export interface CourseReportRow extends ReportPerson, ReportProgress {
@@ -250,6 +253,8 @@ function progressOf(o: Record<string, unknown>): ReportProgress {
     last_ms: num(o.last_ms),
     completed_ms: numOrNull(o.completed_ms),
     ack_ms: numOrNull(o.ack_ms),
+    expires_ms: numOrNull(o.expires_ms),
+    expired: o.expired === true,
   };
 }
 
@@ -1133,13 +1138,24 @@ function PersonCell({ p }: { p: ReportPerson }) {
   );
 }
 
-function StatusCell({ p, latest }: { p: { status: LearnStatus; awaiting_ack?: boolean; version?: number } | null; latest?: number }) {
+function StatusCell({
+  p,
+  latest,
+}: {
+  p: { status: LearnStatus; awaiting_ack?: boolean; version?: number; expires_ms?: number | null; expired?: boolean } | null;
+  latest?: number;
+}) {
   const info = statusInfo(p ? { status: p.status, awaiting_ack: Boolean(p.awaiting_ack) } : null);
   const older = p && latest && p.version && p.version < latest ? p.version : 0;
 
   return (
     <span className='inline-flex flex-wrap items-center gap-1'>
       <Chip tone={info.tone}>{info.label}</Chip>
+      {p?.expired && (
+        <Chip tone='amber' title={p.expires_ms ? `Expired on ${shortDate(p.expires_ms)}` : undefined}>
+          Expired
+        </Chip>
+      )}
       {older > 0 && (
         <span className='text-[11px] text-text-tertiary' title={`Taking version ${older}. The latest is version ${latest}.`}>
           v{older}

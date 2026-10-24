@@ -37,6 +37,10 @@ const CERT_CSS = `
 .chl-cert-fact dd{margin:0;font-size:15px;font-weight:600;color:#111827}
 .chl-cert-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.06em}
 .chl-cert-foot{margin-top:20px;font-size:12px;color:#6b7280}
+.chl-cert-fact dd.chl-cert-expired{color:#b45309}
+.chl-cert-expired{color:#b45309}
+:root[data-dark-mode='true'] .chl-cert-expired{color:#fbbf24}
+:root[data-dark-mode='true'] .chl-cert .chl-cert-expired{color:#b45309}
 @media (max-width:640px){
 .chl-cert{aspect-ratio:auto;padding:8px}
 .chl-cert-frame{padding:24px 14px}
@@ -71,6 +75,12 @@ function CertStyle() {
 
 function finishedLine(c: Certificate) {
   return `Finished ${longDate(c.issued_ms)}${c.score !== null ? ` · Score ${c.score}%` : ''}`;
+}
+
+/** "Valid until 30 October 2027" / "Expired on 30 October 2027"; empty when it never runs out. */
+function validityLine(c: Certificate) {
+  if (c.expires_ms === null) return '';
+  return `${c.expired ? 'Expired on' : 'Valid until'} ${longDate(c.expires_ms)}`;
 }
 
 async function copyText(text: string) {
@@ -164,6 +174,14 @@ function CertificateCard({ c, onOpen }: { c: Certificate; onOpen: () => void }) 
         <div className='min-w-0 flex-1'>
           <div className='break-words text-[15px] font-medium'>{c.title.trim() || 'Untitled course'}</div>
           <div className='mt-0.5 text-xs text-text-tertiary'>{finishedLine(c)}</div>
+          {c.expires_ms !== null && (
+            <div
+              className={cn('mt-0.5 text-xs', c.expired ? 'chl-cert-expired font-medium' : 'text-text-tertiary')}
+              data-testid='carehub-learning-certificate-validity'
+            >
+              {validityLine(c)}
+            </div>
+          )}
         </div>
       </div>
       <div className='flex flex-wrap items-center gap-2'>
@@ -319,6 +337,12 @@ function CertificateSheet({ c, sheetRef }: { c: Certificate; sheetRef: RefObject
               <dd>{c.score}%</dd>
             </div>
           )}
+          {c.expires_ms !== null && (
+            <div className='chl-cert-fact'>
+              <dt>{c.expired ? 'Expired on' : 'Valid until'}</dt>
+              <dd className={c.expired ? 'chl-cert-expired' : undefined}>{longDate(c.expires_ms)}</dd>
+            </div>
+          )}
           <div className='chl-cert-fact'>
             <dt>Certificate code</dt>
             <dd className='chl-cert-code'>{c.code}</dd>
@@ -403,12 +427,12 @@ function codeFromSearch(search: string) {
 
 function VerifiedBox({ c, onOpen }: { c: Certificate; onOpen: () => void }) {
   return (
-    <div className='chl-box-success rounded-[12px] p-4' data-testid='carehub-learning-verify-ok'>
+    <div className={cn(c.expired ? 'chl-box-warning' : 'chl-box-success', 'rounded-[12px] p-4')} data-testid='carehub-learning-verify-ok'>
       <div className='flex items-center gap-2 text-[15px] font-semibold'>
-        <span className='chl-mark-right' aria-hidden='true'>
-          ✓
+        <span className={c.expired ? undefined : 'chl-mark-right'} aria-hidden='true'>
+          {c.expired ? '⚠' : '✓'}
         </span>
-        This certificate is valid
+        {c.expired ? 'This certificate is real, but it has expired' : 'This certificate is valid'}
       </div>
       <dl className='m-0 mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm'>
         <dt className='text-text-tertiary'>Name</dt>
@@ -417,6 +441,12 @@ function VerifiedBox({ c, onOpen }: { c: Certificate; onOpen: () => void }) {
         <dd className='m-0 break-words font-medium'>{c.title.trim() || 'Untitled course'}</dd>
         <dt className='text-text-tertiary'>Finished</dt>
         <dd className='m-0'>{longDate(c.issued_ms)}</dd>
+        {c.expires_ms !== null && (
+          <>
+            <dt className='text-text-tertiary'>{c.expired ? 'Expired on' : 'Valid until'}</dt>
+            <dd className={cn('m-0', c.expired && 'font-medium')}>{longDate(c.expires_ms)}</dd>
+          </>
+        )}
         {c.score !== null && (
           <>
             <dt className='text-text-tertiary'>Score</dt>
