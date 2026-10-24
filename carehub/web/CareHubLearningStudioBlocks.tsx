@@ -16,6 +16,7 @@ import { blocks4CardInfo, BLOCKS4_INFO, Blocks4Editor, blocks4MenuExtras, imageL
 import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
 import { OptionFeedbackEditor, SURVEY_INFO, SurveyEditor } from './CareHubLearningQbank';
 import { MediaExtrasFields } from './CareHubLearningPlayer3';
+import { CropButton } from './CareHubLearningCrop';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
 
@@ -37,6 +38,7 @@ import type {
 } from './CareHubLearningApi';
 import type { Blocks3StudioKit } from './CareHubLearningBlocks3';
 import type { Blocks4StudioKit } from './CareHubLearningBlocks4';
+import type { CropUpload } from './CareHubLearningCrop';
 import type { PictureField } from './CareHubLearningInteract';
 
 // ---------------------------------------------------------------------------
@@ -550,6 +552,7 @@ export function MediaField({
   accept,
   noun,
   prepare,
+  cropNote,
 }: {
   kind: UploadKind;
   label: string;
@@ -566,6 +569,8 @@ export function MediaField({
   noun?: string;
   /** Runs before upload: returns the file to send, or throws an Error whose message is shown. */
   prepare?: (file: File) => Promise<File>;
+  /** Shown in the Crop dialog (pictures only). */
+  cropNote?: string;
 }) {
   const where = useContext(UploadContext);
   const id = useId();
@@ -575,6 +580,8 @@ export function MediaField({
   const [busy, setBusy] = useState<{ name: string; percent: number } | null>(null);
   const [error, setError] = useState('');
   const [over, setOver] = useState(false);
+  // The picture this field last sent, so Crop can use it without downloading it again.
+  const [sent, setSent] = useState<{ url: string; file: File } | null>(null);
   const rule = UPLOAD_RULES[kind];
   const own = isCareHubFile(value);
   const problem = own ? '' : linkProblem(value);
@@ -615,6 +622,7 @@ export function MediaField({
       if (ctrl.signal.aborted) return;
       const { onChange: change, onUpload: uploaded } = latest.current;
 
+      if (kind === 'image') setSent({ url, file });
       if (uploaded) uploaded(url, file);
       else change(url);
     } catch (e) {
@@ -633,6 +641,28 @@ export function MediaField({
     setBusy(null);
   };
 
+  // "Save crop" in the Crop dialog: the cropped copy is uploaded like any picture and the field then uses it.
+  const sendCrop: CropUpload = async (file, onProgress, signal) => {
+    const bad = uploadProblem(kind, file);
+
+    if (bad) throw new Error(bad);
+    if (!where) throw new Error('Pictures can’t be uploaded here.');
+    let url = '';
+
+    try {
+      url = await uploadToCareHub(file, where, kind, signal, onProgress);
+    } catch (e) {
+      if (signal.aborted) return;
+      throw new Error(uploadErrorText(e, kind, file));
+    }
+    if (signal.aborted) return;
+    setSent({ url, file });
+    latest.current.onChange(url);
+  };
+  const sentHere = sent && sent.url === value ? sent.file : null;
+  // Pictures linked from other websites can't be read by the browser, so only uploaded ones can be cropped.
+  const cropHint = kind === 'image' && Boolean(where) && !own && !busy && Boolean(value.trim()) && !problem && !error;
+
   const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files');
   const status = error ? (
     <span role='alert' className='text-xs text-text-error'>
@@ -650,7 +680,8 @@ export function MediaField({
       aria-labelledby={`${id}-label`}
       className={cn('flex min-w-0 flex-col gap-1 rounded-[10px]', over && 'chl-drop-target')}
       onDragOver={(e) => {
-        if (!where || busy || !hasFiles(e)) return;
+        // Not for drags over a dialog opened from here (React passes those on too).
+        if (!where || busy || !hasFiles(e) || !e.currentTarget.contains(e.target as Node)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         if (!over) setOver(true);
@@ -659,7 +690,7 @@ export function MediaField({
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
       }}
       onDrop={(e) => {
-        if (!where || busy || !hasFiles(e)) return;
+        if (!where || busy || !hasFiles(e) || !e.currentTarget.contains(e.target as Node)) return;
         e.preventDefault();
         setOver(false);
         const file = e.dataTransfer.files?.[0];
@@ -695,6 +726,16 @@ export function MediaField({
             </span>
             {uploadedName?.trim() ? `Uploaded “${uploadedName.trim()}”` : `Uploaded ${noun || UPLOADED_NAME[kind]}`}
           </span>
+          {where && kind === 'image' && (
+            <CropButton
+              url={value}
+              file={sentHere}
+              name={uploadedName || sentHere?.name || ''}
+              note={cropNote}
+              noun={noun || UPLOADED_NAME[kind]}
+              upload={sendCrop}
+            />
+          )}
           {where && (
             <SmallButton onClick={() => picker.current?.click()} ariaLabel={`Replace the ${noun || UPLOADED_NAME[kind]}`}>
               Replace
@@ -725,6 +766,7 @@ export function MediaField({
         }}
       />
       {status}
+      {cropHint && <span className='text-xs text-text-tertiary'>Upload the picture to crop it.</span>}
     </div>
   );
 }
@@ -943,7 +985,14 @@ const KIND_OPTIONS: { value: QuestionKind; label: string }[] = [
 ];
 
 const pictureField: PictureField = (value, onChange) => (
-  <MediaField kind='image' label='Picture' value={value} onChange={onChange} hint='Upload a picture (up to 10 MB) or paste a link.' />
+  <MediaField
+    kind='image'
+    label='Picture'
+    value={value}
+    onChange={onChange}
+    hint='Upload a picture (up to 10 MB) or paste a link.'
+    cropNote='Spots and labels placed on this picture don’t move with the crop, so check them after saving.'
+  />
 );
 
 export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange: (q: Question) => void; inQuiz?: boolean }) {
