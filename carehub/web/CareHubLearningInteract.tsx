@@ -2,8 +2,9 @@
 // labeled graphic block (a picture with numbered notes). Everything for them lives here; the other Learning files
 // only call in. Grading and the publish checks follow P3-QKINDS, with the same words as the server.
 //
-// Only types come from the other Learning files: they import this file, so runtime imports would make a cycle.
-// Rich text, picture downloads and the Studio's picture field are passed in as props instead.
+// Only types come from the other Learning files: they import this file, so runtime imports would make a cycle. (The
+// A11y helpers are the one exception: they import nothing.) Rich text, picture downloads and the Studio's picture
+// field are passed in as props instead.
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -19,6 +20,7 @@ import type {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+import { useRefocus } from './CareHubLearningA11y';
 import { chInputClass } from './CareHubUi';
 
 import type { Answer } from './CareHubLearningApi';
@@ -772,38 +774,6 @@ function PictureFrame({
       {ratio > 0 && children}
     </div>
   );
-}
-
-/** Puts focus back on a control after its list re-orders (moving a row can drop focus). */
-function useRefocus() {
-  const els = useRef(new Map<string, HTMLElement>());
-  const want = useRef<string[]>([]);
-
-  useLayoutEffect(() => {
-    const keys = want.current;
-
-    if (!keys.length) return;
-    want.current = [];
-    for (const k of keys) {
-      const el = els.current.get(k);
-
-      if (el && !(el as HTMLButtonElement).disabled) {
-        if (document.activeElement !== el) el.focus();
-        return;
-      }
-    }
-  });
-
-  return {
-    reg: (key: string) => (el: HTMLElement | null) => {
-      if (el) els.current.set(key, el);
-      else els.current.delete(key);
-    },
-    /** Focus the first of these (that can take focus) after the next render. */
-    later: (...keys: string[]) => {
-      want.current = keys;
-    },
-  };
 }
 
 /** An element's width, kept up to date; attach with `ref`. */

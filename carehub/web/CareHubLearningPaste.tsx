@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ClipboardEvent as ReactClipboardEvent, Dispatch, SetStateAction } from 'react';
+import type { ClipboardEvent as ReactClipboardEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -960,24 +960,9 @@ export function insertPaste(c: Content, lessonId: string, plan: PastePlan): { co
   return { content: { ...c, lessons: next }, added: { lessonId, blockIds: intro.map((b) => b.id), lessonIds: lessons.map((l) => l.id) } };
 }
 
-/** Undo: removes exactly what insertPaste added. */
-export function removePaste(c: Content, a: PasteAdded): Content {
-  const ids = new Set(a.blockIds);
-  const gone = new Set(a.lessonIds);
-
-  return {
-    ...c,
-    lessons: c.lessons
-      .filter((l) => !gone.has(l.id))
-      .map((l) => (l.id === a.lessonId && l.blocks.some((b) => ids.has(b.id)) ? { ...l, blocks: l.blocks.filter((b) => !ids.has(b.id)) } : l)),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Dialog
 // ---------------------------------------------------------------------------
-
-type PasteUndo = { label: string; restore: () => void } | null;
 
 const noop = () => undefined;
 const PREVIEW_CTX: BlockCtx = { workspaceId: '', preview: true, kc: {}, done: new Set(), onKcAnswer: noop, onScenarioDone: noop, onMedia: noop };
@@ -1007,34 +992,22 @@ function summaryText(plan: PastePlan) {
 }
 
 /**
- * "Paste text" for the open lesson. Mount it always (it renders nothing while lessonId is ''): after adding it shows
- * Studio's undo toast, and hides that toast again as soon as anything else in the draft changes.
+ * "Paste text" for the open lesson. Mount it always (it renders nothing while lessonId is ''). Adding is one step of
+ * Studio's undo history ("paste text"); `onAdded` gets the words for Studio's undo message.
  */
 export function PasteTextDialog({
   lessonId,
   draft,
   update,
-  setUndo,
+  onAdded,
   onClose,
 }: {
   lessonId: string;
   draft: Content;
-  update: (fn: (c: Content) => Content) => void;
-  setUndo: Dispatch<SetStateAction<PasteUndo>>;
+  update: (fn: (c: Content) => Content, label?: string) => void;
+  onAdded: (label: string) => void;
   onClose: () => void;
 }) {
-  const mine = useRef<{ undo: PasteUndo; after: Content | null }>({ undo: null, after: null });
-
-  useEffect(() => {
-    const m = mine.current;
-
-    if (!m.undo || draft === m.after) return;
-    const u = m.undo;
-
-    mine.current = { undo: null, after: null };
-    setUndo((cur) => (cur === u ? null : cur));
-  }, [draft, setUndo]);
-
   const lesson = lessonId ? draft.lessons.find((l) => l.id === lessonId) : undefined;
 
   if (!lesson) return null;
@@ -1045,18 +1018,9 @@ export function PasteTextDialog({
     update((c) => {
       box.r = insertPaste(c, lessonId, plan);
       return box.r ? box.r.content : c;
-    });
-    const r = box.r;
-
-    if (!r) return;
-    const { added } = r;
-    const undo = {
-      label: `Added ${summaryText(plan)}.`,
-      restore: () => update((c) => removePaste(c, added)),
-    };
-
-    mine.current = { undo, after: r.content };
-    setUndo(undo);
+    }, 'paste text');
+    if (!box.r) return;
+    onAdded(`Added ${summaryText(plan)}.`);
     onClose();
   };
 

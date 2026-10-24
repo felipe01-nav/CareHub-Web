@@ -673,6 +673,11 @@ function ReviewQuiz({ quiz }: { quiz: Quiz }) {
         {quiz.pool_size > 0 && quiz.pool_size < n ? ` Each learner gets ${quiz.pool_size} of these ${n} questions.` : ''} To comment on the quiz,
         use “Comments on the whole course” below.
       </ChNote>
+      {(quiz.draws || []).map((d, i) => (
+        <p key={`${d.bank_id}-${i}`} className='text-sm text-text-secondary'>
+          Plus {plural(d.count, 'question')} picked at random from {d.title?.trim() ? `the bank “${d.title.trim()}”` : 'a question bank'}.
+        </p>
+      ))}
       {quiz.questions.map((q, i) => {
         const right = correctAnswerOf(q);
 
@@ -756,7 +761,7 @@ export function LearningReviewPage({ workspaceId }: { workspaceId: string }) {
   }
 
   const { draft } = data;
-  const quizShown = draft.quiz.questions.length > 0;
+  const quizShown = draft.quiz.questions.length > 0 || (draft.quiz.draws || []).length > 0;
   const order = [...draft.lessons.map((l) => `lesson:${l.id}`), ...(quizShown ? ['quiz'] : [])];
   const current = order.includes(pick) ? pick : order[0] || '';
   const index = order.indexOf(current);
