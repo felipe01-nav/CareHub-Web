@@ -17,6 +17,7 @@ import { formatDuration, isTransientError, LEARNING_PATH, learningNotLive, lErro
 import { assignCoursePath, certificatePath, groupPath, shortDate } from './CareHubLearningAssignApi';
 import { Chip, ProgressBar, RichText } from './CareHubLearningBlocks';
 import { LearningReportsOverview } from './CareHubLearningOverview';
+import { SurveyResults } from './CareHubLearningQbank';
 import { CareHubModal, ChCard, chInputClass, ChNote, ChSection } from './CareHubUi';
 
 import type { LearnStatus } from './CareHubLearningApi';
@@ -1780,6 +1781,8 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
       {quiz && <QuestionStats questions={questions} version={course.version} details={insights ? insights.questions : null} courseTitle={course.title} />}
 
       {insights && insights.knowledge_checks.length > 0 && <KnowledgeChecks checks={insights.knowledge_checks} />}
+
+      <SurveyResults workspaceId={workspaceId} courseId={course.id} Text={RichText} />
 
       {resetting && (
         <ResetDialog

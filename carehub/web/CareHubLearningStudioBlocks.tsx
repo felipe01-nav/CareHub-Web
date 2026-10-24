@@ -12,6 +12,7 @@ import { clampInt, EMBED_SITES, embedKind, newId, setQuestionKind, urlAllowed } 
 import { isCareHubFile, ProgressBar, useFileSrc, videoEmbedUrl } from './CareHubLearningBlocks';
 import { BLOCKS3_INFO, Blocks3Editor, LessonLinkWrap, LinkBlockContext } from './CareHubLearningBlocks3';
 import { INTERACT_KIND_OPTIONS, InteractQuestionEditor, isInteractKind, LABELED_GRAPHIC_INFO, LabeledGraphicEditor } from './CareHubLearningInteract';
+import { OptionFeedbackEditor, SURVEY_INFO, SurveyEditor } from './CareHubLearningQbank';
 import { MediaExtrasFields } from './CareHubLearningPlayer3';
 import { filterPages, useSharablePages } from './CareHubSharePage';
 import { CareHubModal, chInputClass, ChSelect } from './CareHubUi';
@@ -61,6 +62,7 @@ export const BLOCK_INFO: Record<BlockType, { emoji: string; label: string; hint:
   scenario: { emoji: '💬', label: 'Scenario', hint: 'A branching conversation to practice' },
   labeled_graphic: LABELED_GRAPHIC_INFO,
   ...BLOCKS3_INFO,
+  survey: SURVEY_INFO,
   page_link: { emoji: '🔗', label: 'Care Hub page', hint: 'A link to a page in this workspace' },
 };
 
@@ -69,7 +71,7 @@ export const BLOCK_GROUPS: { title: string; types: BlockType[] }[] = [
   { title: 'Media', types: ['image', 'gallery', 'video', 'audio', 'file', 'embed'] },
   {
     title: 'Interactive',
-    types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'labeled_graphic', 'sorting', 'continue'],
+    types: ['knowledge_check', 'scenario', 'flashcards', 'accordion', 'tabs', 'process', 'labeled_graphic', 'sorting', 'survey', 'continue'],
   },
   { title: 'Links', types: ['page_link', 'buttons'] },
 ];
@@ -993,6 +995,10 @@ export function QuestionEditor({ q, onChange, inQuiz }: { q: Question; onChange:
         </div>
       )}
 
+      {(q.kind === 'single' || q.kind === 'multiple' || q.kind === 'true_false') && (
+        <OptionFeedbackEditor options={q.options} onChange={(options) => set({ options })} />
+      )}
+
       {q.kind === 'matching' && (
         <div className='flex flex-col gap-1.5'>
           <div className='text-xs font-medium text-text-secondary'>
@@ -1594,6 +1600,8 @@ export function BlockEditor({ block, onChange }: { block: Block; onChange: (b: B
     case 'table':
     case 'buttons':
       return <Blocks3Editor block={block} onChange={onChange} kit={BLOCKS3_STUDIO} />;
+    case 'survey':
+      return <SurveyEditor block={block} onChange={onChange} />;
     case 'page_link':
       return <PageLinkEditor block={block} onChange={onChange} />;
     default:

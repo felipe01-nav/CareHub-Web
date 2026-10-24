@@ -28,9 +28,24 @@ import {
   toInteractKind,
   withoutInteractFields,
 } from './CareHubLearningInteract';
+import {
+  cloneSurvey,
+  blankSurveyBlock,
+  drawnCount,
+  drawProblems,
+  normalizeDraws,
+  normalizeOptionFeedback,
+  normalizeSurveyBlock,
+  optionFeedbackProblems,
+  ownQuestions,
+  savedSurveys,
+  surveyProblems,
+  surveySeconds,
+} from './CareHubLearningQbank';
 
 import type { Blocks3Block } from './CareHubLearningBlocks3';
 import type { InteractKind, InteractQuestionFields, LabeledGraphicBlock } from './CareHubLearningInteract';
+import type { OptionFeedback, QuizDraw, SavedSurvey, SurveyBlock } from './CareHubLearningQbank';
 
 export const LEARNING_PATH = '/app/learning';
 export const DEFAULT_ACK = 'I have read and understood this course.';
@@ -55,6 +70,8 @@ export interface QOption {
   id: string;
   text: string;
   correct: boolean;
+  /** Shown under this answer once it's picked (single / multiple / true_false; ≤ 300 chars). */
+  feedback?: string;
 }
 
 export interface QPair {
@@ -81,6 +98,8 @@ export interface Question extends InteractQuestionFields {
   feedback_incorrect: string;
   explanation: string;
   points: number;
+  /** A copy from a question bank (published versions and the Studio preview only). */
+  bank_id?: string;
 }
 
 /** single / true_false → option id; multiple → option ids; matching → { pair_id: right token }. */
@@ -135,7 +154,8 @@ export type Block =
   | { id: string; type: 'scenario'; title: string; intro: string; start: string; steps: ScenarioStep[] }
   | { id: string; type: 'page_link'; view_id: string; title: string }
   | LabeledGraphicBlock
-  | Blocks3Block;
+  | Blocks3Block
+  | SurveyBlock;
 
 export type BlockType = Block['type'];
 export type BlockOf<T extends BlockType> = Extract<Block, { type: T }>;
@@ -161,6 +181,7 @@ export const BLOCK_TYPES: BlockType[] = [
   'knowledge_check',
   'scenario',
   'labeled_graphic',
+  'survey',
   'page_link',
   'sorting',
   'timeline',
@@ -196,6 +217,8 @@ export interface Quiz {
   questions: Question[];
   pool_size: number;
   shuffle: boolean;
+  /** Questions taken from question banks on top of the quiz's own (absent when none). */
+  draws?: QuizDraw[];
 }
 
 export interface Content {
@@ -219,6 +242,8 @@ export interface PlayCourse extends Content {
   id: string;
   version: number;
   quiz: PlayQuiz;
+  /** The person's own saved survey answers (block id → answers). */
+  surveys?: Record<string, SavedSurvey>;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +303,7 @@ export interface CourseCard {
   my: MyProgress | null;
 }
 
-export type EventKind = 'lesson_open' | 'heartbeat' | 'block_complete' | 'kc_answer' | 'lesson_complete';
+export type EventKind = 'lesson_open' | 'heartbeat' | 'block_complete' | 'kc_answer' | 'lesson_complete' | 'survey_answer';
 
 export interface LearnEvent {
   kind: EventKind;
@@ -302,6 +327,8 @@ export interface QuizResult {
   feedback: string;
   correct_answer?: Answer;
   explanation?: string;
+  /** The picked answers' feedback (only with correct_answer). */
+  option_feedback?: OptionFeedback[];
 }
 
 export interface QuizResponse {
@@ -375,7 +402,7 @@ export const lapi = {
   },
   play: (ws: string, id: string) =>
     chCall<unknown>('get', `${base(ws)}/courses/${enc(id)}/play`).then((d) => ({
-      course: normalizePlay(obj(d).course, id),
+      course: { ...normalizePlay(obj(d).course, id), surveys: savedSurveys(obj(d).surveys) },
       enrollment: normalizeEnrollment(obj(d).enrollment),
     })),
   start: (ws: string, id: string) =>
@@ -502,8 +529,9 @@ export function normalizeQuestion(raw: unknown): Question {
     prompt: str(o.prompt),
     options: arr(o.options).map((x) => {
       const p = obj(x);
+      const feedback = str(p.feedback);
 
-      return { id: str(p.id) || newId('o'), text: str(p.text), correct: bool(p.correct) };
+      return { id: str(p.id) || newId('o'), text: str(p.text), correct: bool(p.correct), ...(feedback ? { feedback } : {}) };
     }),
     pairs: arr(o.pairs).map((x) => {
       const p = obj(x);
@@ -519,6 +547,8 @@ export function normalizeQuestion(raw: unknown): Question {
   if (Array.isArray(o.rights)) {
     q.rights = arr(o.rights).map((x) => ({ token: str(obj(x).token), text: str(obj(x).text) }));
   }
+
+  if (typeof o.bank_id === 'string' && o.bank_id) q.bank_id = o.bank_id;
 
   Object.assign(q, interactFields(o, q.kind));
   return q;
@@ -615,6 +645,8 @@ export function normalizeBlock(raw: unknown): Block | null {
     case 'table':
     case 'buttons':
       return normalizeBlocks3(o, id);
+    case 'survey':
+      return normalizeSurveyBlock(o, id);
     case 'page_link':
       return { id, type: 'page_link', view_id: str(o.view_id), title: str(o.title) };
     default:
@@ -639,6 +671,7 @@ export function normalizeContent(raw: unknown): Content {
   const o = obj(raw);
   const s = obj(o.settings);
   const q = obj(o.quiz);
+  const draws = normalizeDraws(q.draws);
 
   return {
     title: str(o.title),
@@ -665,6 +698,7 @@ export function normalizeContent(raw: unknown): Content {
       questions: arr(q.questions).map(normalizeQuestion),
       pool_size: clampInt(num(q.pool_size), 0, 10000),
       shuffle: bool(q.shuffle, true),
+      ...(draws.length ? { draws } : {}),
     },
   };
 }
@@ -783,11 +817,14 @@ function normalizeStudioRow(raw: unknown): StudioRow {
 
 function normalizeStudioCourse(raw: unknown): StudioCourse {
   const o = obj(raw);
+  const draft = normalizeContent(o.draft);
 
+  // Copies of bank questions (a restored version has them) are copied again when publishing, so drafts drop them.
+  draft.quiz.questions = ownQuestions(draft.quiz.questions);
   return {
     id: str(o.id),
     status: oneOf(o.status, ['draft', 'published', 'archived'], 'draft'),
-    draft: normalizeContent(o.draft),
+    draft,
     updated_ms: num(o.updated_ms),
     published_version: typeof o.published_version === 'number' ? o.published_version : null,
     has_unpublished_changes: bool(o.has_unpublished_changes),
@@ -821,6 +858,7 @@ function normalizeQuizResponse(raw: unknown): QuizResponse {
 
       if (r.correct_answer !== undefined && r.correct_answer !== null) out.correct_answer = r.correct_answer as Answer;
       if (typeof r.explanation === 'string' && r.explanation) out.explanation = r.explanation;
+      if (Array.isArray(r.option_feedback)) out.option_feedback = normalizeOptionFeedback(r.option_feedback);
       return out;
     }),
     enrollment: normalizeEnrollment(o.enrollment),
@@ -908,6 +946,8 @@ export function cloneBlock(b: Block): Block {
     case 'table':
     case 'buttons':
       return cloneBlocks3(copy);
+    case 'survey':
+      return cloneSurvey(copy);
     case 'scenario': {
       const map = new Map<string, string>();
 
@@ -937,6 +977,7 @@ export function cloneQuestion(q: Question): Question {
   if (copy.items) copy.items = copy.items.map((it) => ({ ...it, id: newId('i') }));
   if (copy.spots) copy.spots = copy.spots.map((sp) => ({ ...sp, id: newId('s') }));
   delete copy.rights;
+  delete copy.bank_id;
   return copy;
 }
 
@@ -1078,9 +1119,11 @@ export function setQuestionKind(q: Question, kind: QuestionKind): Question {
   if (kind === 'true_false') {
     const wasTrue = q.kind === 'true_false' ? q.options[0]?.correct !== false : true;
 
+    const keep = (i: number) => (q.kind === 'true_false' && q.options[i]?.feedback ? { feedback: q.options[i].feedback } : {});
+
     next.options = [
-      { id: q.kind === 'true_false' && q.options[0] ? q.options[0].id : newId('o'), text: 'True', correct: wasTrue },
-      { id: q.kind === 'true_false' && q.options[1] ? q.options[1].id : newId('o'), text: 'False', correct: !wasTrue },
+      { id: q.kind === 'true_false' && q.options[0] ? q.options[0].id : newId('o'), text: 'True', correct: wasTrue, ...keep(0) },
+      { id: q.kind === 'true_false' && q.options[1] ? q.options[1].id : newId('o'), text: 'False', correct: !wasTrue, ...keep(1) },
     ];
     next.pairs = [];
   } else if (kind === 'matching') {
@@ -1295,6 +1338,8 @@ export function blankBlock(type: BlockType): Block {
     case 'table':
     case 'buttons':
       return blankBlocks3(type, id);
+    case 'survey':
+      return blankSurveyBlock(id);
     case 'page_link':
     default:
       return { id, type: 'page_link', view_id: '', title: '' };
@@ -1420,6 +1465,9 @@ export function estimateMinutes(c: Content) {
         case 'scenario':
           lesson += 30 + b.steps.length * 30;
           break;
+        case 'survey':
+          lesson += surveySeconds(b);
+          break;
         default:
           break;
       }
@@ -1429,7 +1477,8 @@ export function estimateMinutes(c: Content) {
   }
 
   if (c.quiz.enabled) {
-    const n = c.quiz.pool_size > 0 ? Math.min(c.quiz.pool_size, c.quiz.questions.length) : c.quiz.questions.length;
+    const own = ownQuestions(c.quiz.questions).length;
+    const n = (c.quiz.pool_size > 0 ? Math.min(c.quiz.pool_size, own) : own) + drawnCount(c.quiz.draws);
 
     seconds += n * 40;
   }
@@ -1535,12 +1584,21 @@ function questionProblems(q: Question, label: string, out: string[]) {
     return;
   }
 
+  optionFeedbackProblems(q, label, out);
   if (q.options.length < 2) out.push(`${label} needs at least two answers.`);
   if (q.options.some((o) => !o.text.trim())) out.push(`${label} has an empty answer.`);
   const correct = q.options.filter((o) => o.correct).length;
 
   if (q.kind === 'multiple' && correct < 1) out.push(`${label} needs at least one correct answer.`);
   if (q.kind !== 'multiple' && correct !== 1) out.push(`${label} needs exactly one correct answer.`);
+}
+
+/** The publish checks for one question (the Question banks page shows them while editing). */
+export function questionChecks(q: Question, label: string): string[] {
+  const out: string[] = [];
+
+  questionProblems(q, label, out);
+  return out;
 }
 
 const MEDIA_WORDS: Partial<Record<BlockType, string>> = {
@@ -1588,6 +1646,7 @@ export function validateContent(c: Content): string[] {
       if (b.type === 'knowledge_check') questionProblems(b.question, `A knowledge check in ${name}`, out);
       if (b.type === 'labeled_graphic') labeledGraphicProblems(b, name, out);
       blocks3Problems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out, urlAllowed);
+      if (b.type === 'survey') surveyProblems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out);
       if (b.type === 'scenario') {
         if (!b.steps.length) out.push(`A scenario in ${name} needs at least one step.`);
         else if (!b.steps.some((s) => s.id === b.start)) out.push(`A scenario in ${name} needs a first step.`);
@@ -1602,12 +1661,15 @@ export function validateContent(c: Content): string[] {
   });
 
   if (c.quiz.enabled) {
-    if (!c.quiz.questions.length) out.push('The final quiz needs at least one question (or switch the quiz off).');
-    if (c.quiz.pool_size > c.quiz.questions.length) out.push('“Questions per attempt” is more than the number of questions.');
-    c.quiz.questions.forEach((q, i) => {
+    const own = ownQuestions(c.quiz.questions);
+
+    if (!own.length && !(c.quiz.draws || []).length) out.push('The final quiz needs at least one question (or switch the quiz off).');
+    if (c.quiz.pool_size > own.length) out.push('“Questions per attempt” is more than the number of questions.');
+    own.forEach((q, i) => {
       see(q.id);
       questionProblems(q, `Quiz question ${i + 1}`, out);
     });
+    drawProblems(c.quiz.draws, null, out);
   }
 
   blocks3LinkProblems(c, out, serverLessonName);
