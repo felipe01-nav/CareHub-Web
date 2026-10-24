@@ -35,6 +35,7 @@ import {
   statusInfo,
   writeQueue,
 } from './CareHubLearningApi';
+import { focusQuietly, focusSoon, learningTitle, usePageTitle } from './CareHubLearningA11y';
 import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
 import { JumpArea } from './CareHubLearningBlocks3';
 import {
@@ -407,7 +408,15 @@ function Outline({
               {l.title.trim() || `Lesson ${number || i + 1}`}
               {side && <SideLessonNote />}
             </span>
-            <span className='sr-only'>{done ? ' (done)' : locked ? ' (locked)' : ''}</span>
+            <span className='sr-only'>
+              {done
+                ? ' (done)'
+                : locked
+                  ? preview
+                    ? ' (locked for learners until earlier lessons are done)'
+                    : ' (locked — finish the earlier lessons first)'
+                  : ''}
+            </span>
           </button>
         );
       })}
@@ -427,6 +436,15 @@ function Outline({
             {quizPassed ? '✓' : quizLocked ? '🔒' : '📝'}
           </span>
           <span className='min-w-0 flex-1'>{course.quiz.title || 'Final quiz'}</span>
+          <span className='sr-only'>
+            {quizPassed
+              ? ' (passed)'
+              : quizLocked
+                ? preview
+                  ? ' (locked for learners until the lessons are done)'
+                  : ' (locked — finish the lessons first)'
+                : ''}
+          </span>
         </button>
       )}
     </nav>
@@ -729,6 +747,8 @@ function QuizView({
     try {
       setResult(await onSubmit(answers));
       window.requestAnimationFrame(() => document.getElementById('chl-quiz-result')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+      // The Submit button goes away: focus moves to the score, so screen readers read it out.
+      focusSoon(() => document.getElementById('chl-quiz-result'));
     } catch (e) {
       setError(lErrorText(e));
     } finally {
@@ -1096,6 +1116,7 @@ function PlayerShell({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
+  const focusHeading = useRef(false);
   const enrRef = useRef<Enrollment | null>(enr);
   const positionRef = useRef<{ lesson_id: string; block_id: string } | null>(initialEnrollment?.progress.position ?? null);
   const baseActive = useRef<Record<string, number>>(
@@ -1272,6 +1293,7 @@ function PlayerShell({
     setNotice('');
     setOutlineOpen(false);
     void flush();
+    focusHeading.current = true;
     window.requestAnimationFrame(() => topRef.current?.scrollIntoView({ block: 'start' }));
   };
 
@@ -1379,6 +1401,18 @@ function PlayerShell({
 
     return () => window.cancelAnimationFrame(raf);
   }, [scrollTarget]);
+
+  // After Next lesson, ← Previous, the outline or a quiz button, focus moves to the new page's heading: the button
+  // pressed may be gone, keyboard users carry on from the top of the page, and screen readers read out the title.
+  useEffect(() => {
+    if (!focusHeading.current) return;
+    focusHeading.current = false;
+    const heading = rootRef.current?.querySelector<HTMLElement>('h1');
+
+    if (heading) focusQuietly(heading);
+  }, [view, quizRound]);
+
+  usePageTitle(isPreview ? null : learningTitle(course.title.trim() || 'Untitled course'));
 
   // Lay out for the space we actually have (the Studio preview can be phone-sized inside a desktop window).
   useEffect(() => {
@@ -1608,7 +1642,11 @@ function PlayerShell({
     positionRef.current = { lesson_id: lessonId, block_id: gate.id };
     enqueue([{ kind: 'block_complete', lesson_id: lessonId, block_id: gate.id, ts_ms: Date.now() }]);
     void flush();
-    if (nextBlock) setScrollTarget(nextBlock.id);
+    if (nextBlock) {
+      setScrollTarget(nextBlock.id);
+      // The Continue button goes away: focus moves to the first block it showed.
+      focusSoon(() => document.getElementById(`chl-b-${nextBlock.id}`));
+    }
   };
 
   const completeLesson = async (lesson: Lesson, to = ''): Promise<boolean> => {
@@ -1677,6 +1715,7 @@ function PlayerShell({
 
   const retryQuiz = async () => {
     if (isPreview) {
+      focusHeading.current = true;
       setQuizRound((n) => n + 1);
       window.requestAnimationFrame(() => topRef.current?.scrollIntoView({ block: 'start' }));
       return;
@@ -1691,6 +1730,7 @@ function PlayerShell({
       setCourse(fresh.course);
       if (fresh.enrollment) setEnr(fresh.enrollment);
       setQuizMeta({ used: fresh.course.quiz.attempts_used, left: fresh.course.quiz.attempts_left });
+      focusHeading.current = true;
       setQuizRound((n) => n + 1);
       window.requestAnimationFrame(() => topRef.current?.scrollIntoView({ block: 'start' }));
     } catch (err) {
