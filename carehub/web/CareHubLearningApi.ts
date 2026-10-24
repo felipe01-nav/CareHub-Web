@@ -30,6 +30,13 @@ import {
   withoutInteractFields,
 } from './CareHubLearningInteract';
 import {
+  courseLookProblems,
+  lessonLookProblems,
+  readCourseLook,
+  readLessonLook,
+  readTopics,
+} from './CareHubLearningLook';
+import {
   cloneSurvey,
   blankSurveyBlock,
   drawnCount,
@@ -46,6 +53,7 @@ import {
 
 import type { Blocks3Block } from './CareHubLearningBlocks3';
 import type { InteractKind, InteractQuestionFields, LabeledGraphicBlock } from './CareHubLearningInteract';
+import type { CoverLayout, Labels, SidebarMode } from './CareHubLearningLook';
 import type { OptionFeedback, QuizDraw, SavedSurvey, SurveyBlock } from './CareHubLearningQbank';
 
 export const LEARNING_PATH = '/app/learning';
@@ -201,6 +209,11 @@ export interface CourseSettings {
   ack_text: string;
   completion: Completion;
   catalog: boolean;
+  /** How the course looks (CareHubLearningLook). Left out = today's: list open, card layout, usual words, no topics. */
+  sidebar?: SidebarMode;
+  cover_layout?: CoverLayout;
+  labels?: Labels;
+  tags?: string[];
   /** People who finish get a certificate (the Certificates page lists them). */
   certificate: boolean;
   /** Months until a finish runs out and people take the course again (1-60); null = never. */
@@ -216,6 +229,10 @@ export interface Lesson {
   branch?: boolean;
   /** "After this lesson": another lesson's id, or "choose" (no Next button). Missing = the next lesson. */
   then?: string;
+  /** One emoji before the title, and a picture across the top (header_alt "" = decoration). Left out = none. */
+  icon?: string;
+  header_image?: string;
+  header_alt?: string;
 }
 
 export interface Quiz {
@@ -309,6 +326,8 @@ export interface CourseCard {
   lessons: number;
   est_minutes: number;
   quiz: boolean;
+  /** Catalog topics; normalizeCard always fills it ([] from older servers). */
+  tags?: string[];
   archived: boolean;
   updated_ms: number;
   my: MyProgress | null;
@@ -683,6 +702,7 @@ export function normalizeLesson(raw: unknown, index = 0): Lesson {
       .map(normalizeBlock)
       .filter((b): b is Block => b !== null),
     ...readBranchFields(o),
+    ...readLessonLook(o),
   };
 }
 
@@ -708,6 +728,7 @@ export function normalizeContent(raw: unknown): Content {
       ack_text: typeof s.ack_text === 'string' ? s.ack_text : DEFAULT_ACK,
       completion: oneOf(s.completion, ['all_lessons', 'pass_quiz', 'all_lessons_and_quiz'], 'all_lessons'),
       catalog: bool(s.catalog, true),
+      ...readCourseLook(s),
       certificate: bool(s.certificate),
       recert_months: recertMonths(s.recert_months),
     },
@@ -814,6 +835,7 @@ function normalizeCard(raw: unknown): CourseCard {
     lessons: num(o.lessons),
     est_minutes: num(o.est_minutes),
     quiz: bool(o.quiz),
+    tags: readTopics(o.tags),
     archived: bool(o.archived),
     updated_ms: num(o.updated_ms),
     my: normalizeMy(o.my),
@@ -1647,6 +1669,7 @@ export function validateContent(c: Content): string[] {
   if (!title) out.push('Give the course a title.');
   if (title.length > 200) out.push('Keep the course title under 200 characters.');
   if (c.cover.trim() && !urlAllowed(c.cover)) out.push('The cover image link must start with https://.');
+  courseLookProblems(c.settings, out);
   if (!c.lessons.length) out.push('Add at least one lesson.');
   const ids = new Set<string>();
   let repeated = false;
@@ -1661,6 +1684,7 @@ export function validateContent(c: Content): string[] {
     see(l.id);
     if (!l.title.trim()) out.push(`Lesson ${i + 1} needs a title.`);
     if (!l.blocks.length) out.push(`${name} needs at least one block.`);
+    lessonLookProblems(l, serverLessonName(i, l.title), urlAllowed, out);
     l.blocks.forEach((b, bi) => {
       see(b.id);
       const media = MEDIA_WORDS[b.type];
