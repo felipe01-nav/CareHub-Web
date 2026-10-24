@@ -379,7 +379,7 @@ function detectDelimiter(text: string): string {
 }
 
 /** CSV rows: quotes, "" inside quotes, delimiters and line breaks inside quotes, \r\n or \n or \r. */
-function parseCsv(text: string, delimiter: string): { rows: string[][]; openQuoteRow: number } {
+export function parseCsv(text: string, delimiter: string): { rows: string[][]; openQuoteRow: number } {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';

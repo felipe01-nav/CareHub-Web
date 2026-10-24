@@ -15,11 +15,13 @@ import { correctAnswerOf, LEARNING_PATH, learningNotLive, lErrorText, normalizeC
 import { focusSoon } from './CareHubLearningA11y';
 import { BlockView, Chip, NarrowContext, QuestionView, RichText } from './CareHubLearningBlocks';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
+import { csvDate, downloadCsv, slug } from './CareHubLearningReports';
 import { BLOCK_INFO } from './CareHubLearningStudioBlocks';
 import { CareHubModal, ChNote, ChSelect, chInputClass } from './CareHubUi';
 
 import type { Block, BlockOf, Content, Quiz } from './CareHubLearningApi';
 import type { BlockCtx } from './CareHubLearningBlocks';
+import type { CsvValue } from './CareHubLearningReports';
 
 // ---------------------------------------------------------------------------
 // Types and server calls
@@ -255,6 +257,36 @@ export function blockExcerpt(b: Block) {
     .trim();
 
   return plain.length > 80 ? `${plain.slice(0, 79)}…` : plain;
+}
+
+/**
+ * "Download comments (CSV)": every comment and reply (open and done), one row each, in course order — the whole course,
+ * then each lesson's blocks, then blocks that were removed. A reply has the Type "Reply" and its thread's status.
+ */
+export function downloadComments(draft: Content, placed: PlacedThreads) {
+  const rows: CsvValue[][] = [];
+  const lessonName = new Map(draft.lessons.map((l, i) => [l.id, `${i + 1}. ${l.title.trim() || 'Untitled lesson'}`]));
+  const add = (lesson: string, block: string, ts: DraftThread[]) => {
+    for (const t of ts) {
+      const status = t.done ? 'Done' : 'Open';
+
+      rows.push([lesson, block, 'Comment', t.text, t.name, csvDate(t.created_ms), status]);
+      for (const r of t.replies) rows.push([lesson, block, 'Reply', r.text, r.name, csvDate(r.created_ms), status]);
+    }
+  };
+
+  add('Whole course', '', placed.course);
+  for (const l of draft.lessons) {
+    for (const b of l.blocks) {
+      if (placed.lessonOf.get(b.id) !== l.id) continue;
+      const words = blockExcerpt(b);
+
+      add(lessonName.get(l.id) || '', `${INFO[b.type]?.label || 'Block'}${words ? ` · ${words}` : ''}`, placed.blocks.get(b.id) || []);
+    }
+  }
+
+  for (const t of placed.removed) add(lessonName.get(t.lesson_id) || '', 'A block that was removed', [t]);
+  downloadCsv(`${slug(draft.title, 'course')}-comments`, ['Lesson', 'Block', 'Type', 'Comment', 'Written by', 'Date', 'Status'], rows);
 }
 
 async function copyText(text: string) {
@@ -1110,9 +1142,16 @@ function CommentsPanel({
               {showDone ? 'Hide done' : `Show done (${doneCount})`}
             </button>
           )}
-          <Button type='button' size='sm' variant='outline' className='ml-auto' onClick={onShare}>
-            🔗 Share for review
-          </Button>
+          <div className='ml-auto flex flex-wrap gap-2'>
+            {loaded && all.length > 0 && (
+              <Button type='button' size='sm' variant='outline' onClick={() => downloadComments(draft, placed)} data-testid='carehub-draft-comments-csv'>
+                Download comments (CSV)
+              </Button>
+            )}
+            <Button type='button' size='sm' variant='outline' onClick={onShare}>
+              🔗 Share for review
+            </Button>
+          </div>
         </div>
         {error ? <ChNote tone='error'>{lErrorText(error)}</ChNote> : null}
         {loaded && groups.length > 0 && groups}
