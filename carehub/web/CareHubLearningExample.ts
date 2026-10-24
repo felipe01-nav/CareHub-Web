@@ -1,6 +1,7 @@
 // CareHub Learning: the example courses Studio can create ("Start from an example"), one for each kind of course.
 // Everything here is made up: Brightside Bakery, Riverstone Home Internet and their customers are fictional.
 // Each example only uses blocks Studio has, takes its settings from its course type, and can be published as it is.
+// Pictures are Studio's sample pictures (/covers/…), described as the stand-ins they are.
 import { applyPreset, defaultSettings, estimateMinutes, newId } from './CareHubLearningApi';
 
 import type {
@@ -16,6 +17,7 @@ import type {
   ScenarioStep,
   TextItem,
 } from './CareHubLearningApi';
+import type { GalleryImage, LinkButton } from './CareHubLearningBlocks3';
 
 export interface ExampleCourse {
   preset: Preset;
@@ -85,6 +87,53 @@ function matching(prompt: string, pairs: [left: string, right: string][], extra:
   return { ...question('matching', prompt, [], extra), pairs: pairs.map(([left, right]) => ({ id: newId('p'), left, right })) };
 }
 
+function fillBlank(prompt: string, answers: string[], extra: Partial<Question> = {}): Question {
+  return { ...question('fill_blank', prompt, [], extra), answers, case_sensitive: false };
+}
+
+/** Put in order: `list` is the right order (learners get it shuffled). */
+function ordering(prompt: string, list: string[], extra: Partial<Question> = {}): Question {
+  return { ...question('ordering', prompt, [], extra), items: list.map((text) => ({ id: newId('o'), text })) };
+}
+
+/** One of the sample pictures Studio offers (1–6). */
+function sample(n: number) {
+  return `/covers/m_cover_image_${n}.png`;
+}
+
+function pictures(list: [picture: number, alt: string, caption: string][]): GalleryImage[] {
+  return list.map(([n, alt, caption]) => ({ id: newId('g'), url: sample(n), alt, caption }));
+}
+
+/** A sorting activity: each card says which pile it belongs in (0 = the first pile). */
+function sorting(prompt: string, piles: string[], list: [text: string, pile: number][]): Block {
+  const ps = piles.map((title) => ({ id: newId('g'), title }));
+
+  return b('sorting', { prompt, piles: ps, cards: list.map(([text, pile]) => ({ id: newId('c'), text, pile_id: ps[pile].id })) });
+}
+
+function timeline(list: [date: string, title: string, text: string][]): Block {
+  return b('timeline', { items: list.map(([date, title, text]) => ({ id: newId('t'), date, title, text, image_url: '', image_alt: '' })) });
+}
+
+/** Buttons that open other lessons of the course (the first one is the main button). */
+function lessonButtons(list: [label: string, to: Lesson][]): Block {
+  return b('buttons', {
+    items: list.map(
+      ([label, to], i): LinkButton => ({
+        id: newId('bt'),
+        label,
+        style: i === 0 ? 'primary' : 'secondary',
+        target: { kind: 'lesson', lesson_id: to.id, block_id: '' },
+      })
+    ),
+  });
+}
+
+function quotes(list: [text: string, cite: string][]): Block {
+  return b('quote_carousel', { quotes: list.map(([text, cite]) => ({ id: newId('qt'), text, cite, image_url: '', image_alt: '' })) });
+}
+
 interface Turn {
   /** What happens, or what the customer says. */
   text: string;
@@ -149,6 +198,8 @@ function billingBasics(): Content {
           alt: 'A colorful abstract picture used as a stand-in for the bakery counter',
           caption: 'The billing desk sits next to the front counter.',
           width: 'full',
+          layout: 'side',
+          text: 'Customers reach the billing desk **in person**, **by phone** or **by email**. However they get in touch, you follow the same steps, and help is never far away.',
         }),
         b('callout', {
           title: 'Good to know',
@@ -159,9 +210,19 @@ function billingBasics(): Content {
           style: 'check',
           items: ['Greet the customer and say your name', 'Find the order number', 'Explain what you will do next', 'Send a confirmation email'],
         }),
+        timeline([
+          ['8:30 am', 'Doors open', 'Read the overnight emails and online orders. Answer anything urgent first.'],
+          ['11:00 am', 'Business invoices go out', 'Invoices for business customers are emailed. They have 14 days to pay.'],
+          ['2:00 pm', 'Refunds are sent', 'Refunds approved in the morning go out together. Card refunds take 3 to 5 working days to arrive.'],
+          ['5:30 pm', 'Hand over', 'Leave a short note on anything still open, so the next shift can pick it up.'],
+        ]),
         b('statement', { text: 'Fix the problem first, then explain it.' }),
         b('divider', {}),
-        b('quote', { text: 'A calm answer turns most billing calls around in under five minutes.', cite: 'Sam Ortiz, Billing lead' }),
+        b('quote', {
+          text: 'A calm answer turns most billing calls around in under five minutes.',
+          cite: 'Sam Ortiz, Billing lead',
+          image_url: sample(2),
+        }),
       ],
       20
     ),
@@ -172,6 +233,15 @@ function billingBasics(): Content {
           ['Invoice number', 'Starts with **BB-** and is printed at the top right, for example BB-1042.'],
           ['Line items', 'One line per product: cakes, breads, extras like candles, and the delivery fee.'],
           ['Due date', 'Business customers pay within 14 days. Walk-in customers pay when they order.'],
+        ]),
+      }),
+      b('paragraph', { text: 'These three bestsellers are on most invoices, so it helps to know their prices.' }),
+      b('gallery', {
+        layout: 'grid',
+        images: pictures([
+          [1, 'A colorful abstract picture standing in for a birthday cake', 'Birthday cake: $40.00'],
+          [6, 'A colorful abstract picture standing in for a sourdough loaf', 'Sourdough loaf: $6.50'],
+          [4, 'A colorful abstract picture standing in for a box of cupcakes', 'Box of six cupcakes: $18.00'],
         ]),
       }),
       b('accordion', {
@@ -206,7 +276,18 @@ function billingBasics(): Content {
           ['Confirm by email', 'Email the customer a confirmation. Card refunds take 3 to 5 working days.'],
         ]),
       }),
-      b('paragraph', { text: 'Time to practice. Jordan Lee, a regular customer, calls the bakery. Choose what you would say.' }),
+      b('paragraph', { text: 'Time to practice. Jordan Lee, a regular customer, calls the bakery. Here’s the invoice for the order. Choose what you would say.' }),
+      b('table', {
+        header: true,
+        rows: [
+          ['Item', 'Quantity', 'Price'],
+          ['Birthday cake', '1', '$40.00'],
+          ['Birthday candles', '1', '$2.00'],
+          ['Delivery', '1', '$6.00'],
+          ['**Total**', '', '**$48.00**'],
+        ],
+        caption: 'Jordan’s invoice, BB-1042',
+      }),
       scenario('A customer was charged twice', 'You’re on the billing phone line on a busy Saturday morning.', [
         {
           text: '“Hi, it’s Jordan Lee. I ordered a birthday cake last week and my card was charged twice. I’m really not happy.”',
@@ -246,6 +327,12 @@ function billingBasics(): Content {
           }
         ),
       }),
+      sorting('Which of these can you refund straight away, and which need the billing lead first?', ['Refund it now', 'Ask the billing lead first'], [
+        ['The same payment was taken twice', 0],
+        ['The card reader froze and a retry charged the card again', 0],
+        ['The customer says the total looks wrong', 1],
+        ['The customer wants their money back for a cake they didn’t like', 1],
+      ]),
       b('callout', { title: 'Nice work', text: 'You’re ready for the final quiz. You need 70% to pass and you have three tries.', tone: 'success' }),
     ]),
   ];
@@ -269,6 +356,10 @@ function billingBasics(): Content {
       }
     ),
     trueFalse('Orders over $80 are delivered free.', true, { feedback_correct: 'Correct.', feedback_incorrect: 'It’s true — over $80, delivery is free.' }),
+    fillBlank('Every Brightside invoice number starts with ___.', ['BB-', 'BB'], {
+      feedback_correct: 'Yes — for example BB-1042.',
+      feedback_incorrect: 'Invoice numbers start with BB-, for example BB-1042.',
+    }),
     matching(
       'Match each word with what it means.',
       [
@@ -311,6 +402,14 @@ function upsetCaller(): Content {
           ['Fix what you can', 'Tell the caller what you’re doing while you do it, so the silence doesn’t worry them.'],
           ['Agree what happens next', 'Say who will do what, and by when. Then check the caller is happy with that.'],
         ]),
+      }),
+      b('image', {
+        url: sample(1),
+        alt: 'A colorful abstract picture',
+        caption: '',
+        width: 'full',
+        layout: 'text_on',
+        text: '**Listen first.** Most callers calm down once they feel heard.',
       }),
       b('flashcards', {
         cards: cards([
@@ -401,6 +500,12 @@ function upsetCaller(): Content {
           }
         ),
       }),
+      b('paragraph', { text: 'Here’s what Riverstone customers said after calls like these.' }),
+      quotes([
+        ['She let me finish before she said anything. That alone made me feel better.', 'Riverstone customer, after a call about dropped internet'],
+        ['I didn’t need a manager in the end. I needed someone to tell me what went wrong.', 'Riverstone customer, after a refund call'],
+        ['He told me what he was doing while I waited, so the silence didn’t worry me.', 'Riverstone customer, after a billing call'],
+      ]),
       b('callout', {
         title: 'Nice work',
         text: 'That’s the lab done. Try the calls again any time and pick different answers to see what happens.',
@@ -433,18 +538,15 @@ function cardPolicy(): Content {
       b('paragraph', {
         text: 'Every call at **Riverstone Home Internet** is recorded, so we can train and check quality. From now on, nobody reads out, types or writes down a full card number during a call.',
       }),
-      b('list', {
-        style: 'check',
-        items: [
-          'Never ask a caller to read out their card number',
-          'Send the secure payment link by text or email instead',
-          'If a caller starts reading out their number, stop them politely',
-          'Never write card details on paper or in account notes',
-        ],
+      b('columns', {
+        left: '**Always**\nSend the secure payment link by text or email.\nIf a caller starts reading out their number, stop them politely.',
+        right: '**Never**\nAsk a caller to read out their card number.\nWrite card details on paper or in account notes.',
       }),
       b('statement', { text: 'If you can see or hear a full card number, something has gone wrong.' }),
     ]),
     lesson('Taking a payment', [
+      b('divider', { style: 'numbered' }),
+      b('heading', { text: 'On a call', level: 2 }),
       b('paragraph', { text: 'Here’s how to take a payment on a call. It takes about a minute.' }),
       b('process', {
         items: items([
@@ -454,6 +556,13 @@ function cardPolicy(): Content {
           ['Check it worked', 'When the payment shows on the account, tell the caller the amount and thank them.'],
         ]),
       }),
+      b('code', {
+        caption: 'The text message the caller gets. You can paste the same words into a chat.',
+        code: 'Riverstone Home Internet: here is your secure payment link.\nhttps://pay.riverstone.example/p/7Q2K9X\nIt works for 15 minutes. We will never ask you to read out your card number.',
+        language: 'plain',
+      }),
+      b('divider', { style: 'numbered' }),
+      b('heading', { text: 'When something goes wrong', level: 2 }),
       b('accordion', {
         items: items([
           ['What if the caller can’t use a link?', 'Transfer them to the automated payment line. They type their card number on the keypad, and it’s never recorded.'],
@@ -483,46 +592,49 @@ function cardPolicy(): Content {
 // ---------------------------------------------------------------------------
 
 function callHandling(): Content {
+  const ccp = lesson('Your Contact Control Panel', [
+    b('image', { url: sample(6), alt: 'A colorful abstract banner picture', caption: '', width: 'full', layout: 'banner' }),
+    b('heading', { text: 'Meet the CCP', level: 2 }),
+    b('paragraph', {
+      text: 'At **Riverstone Home Internet**, you take every call in the **Contact Control Panel** (CCP), the phone that’s part of Amazon Connect. It runs in your browser, so keep its tab open during your shift.',
+    }),
+    b('tabs', {
+      items: items([
+        ['Your status', 'Set your status to **Available** to get calls, and to **Offline** when your shift ends. Your team may add others, like Break or Training.'],
+        ['Taking a call', 'When a call comes in, the CCP rings and shows the caller’s number. Choose **Accept** to answer.'],
+        ['After the call', 'When the call ends, you move to **After contact work** (ACW). Finish your notes, then choose **Close contact** to get the next call.'],
+      ]),
+    }),
+    b('callout', { title: 'Good to know', text: 'Not getting any calls? Check that your status says **Available** — it’s the most common reason.', tone: 'tip' }),
+  ]);
+  const steps = lesson('A call from start to finish', [
+    b('paragraph', { text: 'Every Riverstone call follows the same five steps. Go through them in order.' }),
+    b('process', {
+      items: items([
+        ['Greet', 'Say the company name and your first name, then ask how you can help.'],
+        ['Check who’s calling', 'Ask for the account number and the first line of the address. Don’t share any account details until both match.'],
+        ['Solve the problem', 'Tell the caller what you’re doing while you do it. Ask before you put them on hold.'],
+        ['Sum up', 'Repeat what you did and what happens next, then ask: “Is there anything else I can help with?”'],
+        ['Wrap up', 'In **After contact work**, write a short note for the next person, then choose **Close contact**.'],
+      ]),
+    }),
+    b('knowledge_check', {
+      question: single(
+        'A caller wants to know their latest bill but can’t give the address on the account. What do you do?',
+        ['Read out the bill, since they know the account number', 'Explain that you can’t share details until you’ve checked who’s calling', 'End the call'],
+        1,
+        {
+          feedback_correct: 'Right. Account details stay private until you know who you’re talking to.',
+          feedback_incorrect: 'Not quite. Don’t share account details until you’ve checked who’s calling.',
+        }
+      ),
+    }),
+    b('continue', { label: 'Continue', require_complete: true }),
+    b('statement', { text: 'Check who’s calling before you share anything.' }),
+  ]);
   const lessons: Lesson[] = [
-    lesson('Your Contact Control Panel', [
-      b('heading', { text: 'Meet the CCP', level: 2 }),
-      b('paragraph', {
-        text: 'At **Riverstone Home Internet**, you take every call in the **Contact Control Panel** (CCP), the phone that’s part of Amazon Connect. It runs in your browser, so keep its tab open during your shift.',
-      }),
-      b('tabs', {
-        items: items([
-          ['Your status', 'Set your status to **Available** to get calls, and to **Offline** when your shift ends. Your team may add others, like Break or Training.'],
-          ['Taking a call', 'When a call comes in, the CCP rings and shows the caller’s number. Choose **Accept** to answer.'],
-          ['After the call', 'When the call ends, you move to **After contact work** (ACW). Finish your notes, then choose **Close contact** to get the next call.'],
-        ]),
-      }),
-      b('callout', { title: 'Good to know', text: 'Not getting any calls? Check that your status says **Available** — it’s the most common reason.', tone: 'tip' }),
-    ]),
-    lesson('A call from start to finish', [
-      b('paragraph', { text: 'Every Riverstone call follows the same five steps. Go through them in order.' }),
-      b('process', {
-        items: items([
-          ['Greet', 'Say the company name and your first name, then ask how you can help.'],
-          ['Check who’s calling', 'Ask for the account number and the first line of the address. Don’t share any account details until both match.'],
-          ['Solve the problem', 'Tell the caller what you’re doing while you do it. Ask before you put them on hold.'],
-          ['Sum up', 'Repeat what you did and what happens next, then ask: “Is there anything else I can help with?”'],
-          ['Wrap up', 'In **After contact work**, write a short note for the next person, then choose **Close contact**.'],
-        ]),
-      }),
-      b('knowledge_check', {
-        question: single(
-          'A caller wants to know their latest bill but can’t give the address on the account. What do you do?',
-          ['Read out the bill, since they know the account number', 'Explain that you can’t share details until you’ve checked who’s calling', 'End the call'],
-          1,
-          {
-            feedback_correct: 'Right. Account details stay private until you know who you’re talking to.',
-            feedback_incorrect: 'Not quite. Don’t share account details until you’ve checked who’s calling.',
-          }
-        ),
-      }),
-      b('continue', { label: 'Continue', require_complete: true }),
-      b('statement', { text: 'Check who’s calling before you share anything.' }),
-    ]),
+    ccp,
+    steps,
     lesson('Transfers and wrapping up', [
       b('paragraph', { text: 'Sometimes another team needs to help. A good transfer means the caller never has to tell their story twice.' }),
       b('accordion', {
@@ -542,9 +654,14 @@ function callHandling(): Content {
       }),
       b('callout', {
         title: 'Ready for the quiz',
-        text: 'The final quiz has five questions. You need 80% to pass and you have three tries. Pass it to get your certificate.',
+        text: 'The final quiz has seven questions. You need 80% to pass and you have three tries. Pass it to get your certificate.',
         tone: 'success',
       }),
+      b('paragraph', { text: 'Want another look first?' }),
+      lessonButtons([
+        ['Review the five steps of a call', steps],
+        ['Review the CCP', ccp],
+      ]),
     ]),
   ];
 
@@ -585,6 +702,14 @@ function callHandling(): Content {
       ],
       { feedback_correct: 'All matched!', feedback_incorrect: 'Some pairs are mixed up.', points: 2 }
     ),
+    ordering('Put the steps of a Riverstone call in order.', ['Greet the caller', 'Check who’s calling', 'Solve the problem', 'Sum up', 'Wrap up'], {
+      feedback_correct: 'That’s it: greet, check, solve, sum up, wrap up.',
+      feedback_incorrect: 'Not quite. Greet the caller, check who’s calling, solve the problem, sum up, then wrap up.',
+    }),
+    fillBlank('When a call ends, you move to ___ to finish your notes.', ['After contact work', 'ACW'], {
+      feedback_correct: 'Yes — After contact work (ACW).',
+      feedback_incorrect: 'It’s After contact work (ACW).',
+    }),
   ];
 
   return course('certification', {
@@ -614,6 +739,7 @@ function holdCall(): Content {
         ]),
       }),
       b('statement', { text: 'Never leave a caller on hold for more than two minutes without checking in.' }),
+      b('divider', { style: 'spacer' }),
       b('knowledge_check', {
         question: single(
           'You said the hold would take two minutes. It’s been three. What do you do?',

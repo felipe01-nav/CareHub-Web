@@ -22,6 +22,7 @@ import {
 } from './CareHubLearningApi';
 import { firstControl, focusSoon, tabKey } from './CareHubLearningA11y';
 import { Blocks3View, JumpLink } from './CareHubLearningBlocks3';
+import { Blocks4View, imageLayout } from './CareHubLearningBlocks4';
 import { coerceInteractAnswer, InteractQuestionView, isInteractKind, LabeledGraphicView } from './CareHubLearningInteract';
 import { MatchCards, pickedFeedback, SurveyView } from './CareHubLearningQbank';
 import { UUID_RE } from './CareHubCore';
@@ -30,6 +31,7 @@ import { CaptionsTrack, MediaTranscript } from './CareHubLearningPlayer3';
 
 import type { Answer, Block, BlockOf, ChipTone, KcRecord, Preset, Question, ScenarioChoice } from './CareHubLearningApi';
 import type { Blocks3Kit } from './CareHubLearningBlocks3';
+import type { Blocks4Kit } from './CareHubLearningBlocks4';
 import type { SavedSurvey, SurveyAnswers, SurveyBlock } from './CareHubLearningQbank';
 
 // ---------------------------------------------------------------------------
@@ -217,6 +219,12 @@ export function RichText({ text, className }: { text: string; className?: string
 // Questions (knowledge checks and the final quiz)
 // ---------------------------------------------------------------------------
 
+/** A matching answer ({ pair_id: right token }). */
+const isPairs = (a: Answer | undefined): a is Record<string, string> =>
+  Boolean(a) && typeof a === 'object' && !Array.isArray(a) && Object.values(a).every((v) => typeof v === 'string');
+/** Option ids (multiple choice). */
+const isIds = (a: Answer | undefined): a is string[] => Array.isArray(a) && a.every((x) => typeof x === 'string');
+
 export function coerceAnswer(q: Question, raw: unknown): Answer | undefined {
   if (isInteractKind(q.kind)) return coerceInteractAnswer(q, raw);
   if (q.kind === 'multiple') return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : undefined;
@@ -288,15 +296,15 @@ export function QuestionView({
               questionId={q.id}
               lefts={q.pairs.map((p) => ({ id: p.id, text: p.left }))}
               rights={rights}
-              value={value && typeof value === 'object' && !Array.isArray(value) ? value : {}}
+              value={isPairs(value) ? value : {}}
               onChange={onChange}
               Text={RichText}
             />
           )}
           {q.pairs.map((p) => {
-            const current = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+            const current = isPairs(value) ? value : {};
             const picked = current[p.id] || '';
-            const want = reveal && typeof reveal === 'object' && !Array.isArray(reveal) ? reveal[p.id] : undefined;
+            const want = isPairs(reveal) ? reveal[p.id] : undefined;
             const mark = want === undefined ? '' : picked === want ? 'right' : 'wrong';
 
             return (
@@ -347,8 +355,8 @@ export function QuestionView({
       ) : (
         <div className='mt-2 flex flex-col gap-2' role={multiple ? 'group' : 'radiogroup'}>
           {q.options.map((o) => {
-            const selected = multiple ? Array.isArray(value) && value.includes(o.id) : value === o.id;
-            const isRight = reveal !== undefined && (Array.isArray(reveal) ? reveal.includes(o.id) : reveal === o.id);
+            const selected = multiple ? isIds(value) && value.includes(o.id) : value === o.id;
+            const isRight = reveal !== undefined && (isIds(reveal) ? reveal.includes(o.id) : reveal === o.id);
             const mark = reveal === undefined ? '' : isRight ? 'right' : selected ? 'wrong' : '';
 
             return (
@@ -369,7 +377,7 @@ export function QuestionView({
                   disabled={disabled}
                   onChange={() => {
                     if (multiple) {
-                      const list = Array.isArray(value) ? value : [];
+                      const list = isIds(value) ? value : [];
 
                       onChange(list.includes(o.id) ? list.filter((x) => x !== o.id) : [...list, o.id]);
                     } else {
@@ -749,6 +757,9 @@ const BLOCKS3_KIT: Blocks3Kit = {
   fetchFile: fetchCareHubFile,
 };
 
+/** What two columns, code snippets, quote carousels and the divider / quote / image looks borrow (CareHubLearningBlocks4). */
+const BLOCKS4_KIT: Blocks4Kit = { Text: RichText, useSrc: useFileSrc, urlOk: urlAllowed };
+
 export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
   switch (block.type) {
     case 'heading': {
@@ -773,15 +784,7 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
         </div>
       );
     case 'quote':
-      if (!block.text.trim()) return null;
-      return (
-        <blockquote className='m-0 border-l-4 border-border-primary pl-4'>
-          <div className='text-lg italic leading-relaxed'>
-            <RichText text={block.text} />
-          </div>
-          {block.cite.trim() && <div className='mt-1 text-sm text-text-tertiary'>— {block.cite}</div>}
-        </blockquote>
-      );
+      return <Blocks4View block={block} ctx={ctx} kit={BLOCKS4_KIT} />;
     case 'callout':
       if (!block.title.trim() && !block.text.trim()) return null;
       return (
@@ -840,9 +843,9 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
     }
 
     case 'divider':
-      return <hr className='my-1 border-t border-border-primary' />;
+      return <Blocks4View block={block} ctx={ctx} kit={BLOCKS4_KIT} />;
     case 'image':
-      return <ImageBlock block={block} ctx={ctx} />;
+      return imageLayout(block) === 'plain' ? <ImageBlock block={block} ctx={ctx} /> : <Blocks4View block={block} ctx={ctx} kit={BLOCKS4_KIT} />;
     case 'video':
       return <VideoBlock block={block} ctx={ctx} />;
     case 'audio':
@@ -872,6 +875,10 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockCtx }) {
     case 'table':
     case 'buttons':
       return <Blocks3View block={block} ctx={ctx} kit={BLOCKS3_KIT} />;
+    case 'columns':
+    case 'code':
+    case 'quote_carousel':
+      return <Blocks4View block={block} ctx={ctx} kit={BLOCKS4_KIT} />;
     case 'survey': {
       const s = ctx.survey;
 

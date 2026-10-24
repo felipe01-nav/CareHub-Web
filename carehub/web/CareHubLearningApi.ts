@@ -12,6 +12,17 @@ import {
   cloneBlocks3,
   normalizeBlocks3,
 } from './CareHubLearningBlocks3';
+import {
+  blankBlocks4,
+  blankDividerExtras,
+  blocks4Problems,
+  blocks4Seconds,
+  cloneBlocks4,
+  dividerExtras,
+  imageExtras,
+  normalizeBlocks4,
+  quoteExtras,
+} from './CareHubLearningBlocks4';
 import { branchProblems, readBranchFields } from './CareHubLearningBranching';
 import {
   blankLabeledGraphic,
@@ -52,7 +63,8 @@ import {
 } from './CareHubLearningQbank';
 
 import type { Blocks3Block } from './CareHubLearningBlocks3';
-import type { InteractKind, InteractQuestionFields, LabeledGraphicBlock } from './CareHubLearningInteract';
+import type { Blocks4Block, DividerStyle, ImageLayout, ImageSide, SpacerSize } from './CareHubLearningBlocks4';
+import type { Box, InteractKind, InteractQuestionFields, LabeledGraphicBlock, Point } from './CareHubLearningInteract';
 import type { OptionFeedback, QuizDraw, SavedSurvey, SurveyBlock } from './CareHubLearningQbank';
 
 export const LEARNING_PATH = '/app/learning';
@@ -110,8 +122,11 @@ export interface Question extends InteractQuestionFields {
   bank_id?: string;
 }
 
-/** single / true_false → option id; multiple → option ids; matching → { pair_id: right token }. */
-export type Answer = string | string[] | Record<string, string>;
+/** single / true_false → option id; multiple → option ids; matching → { pair_id: right token };
+ * fill_blank → the words typed; ordering → item ids in order; hotspot → the point clicked (percent).
+ * A right answer from the server has the same shape, except fill_blank (every accepted answer) and hotspot
+ * (the right spots). */
+export type Answer = string | string[] | Record<string, string> | Point | Box[];
 
 export interface TextItem {
   id: string;
@@ -144,11 +159,11 @@ export type Block =
   | { id: string; type: 'heading'; text: string; level: 1 | 2 | 3 }
   | { id: string; type: 'paragraph'; text: string }
   | { id: string; type: 'statement'; text: string }
-  | { id: string; type: 'quote'; text: string; cite: string }
+  | { id: string; type: 'quote'; text: string; cite: string; image_url?: string; image_alt?: string }
   | { id: string; type: 'callout'; title: string; text: string; tone: Tone }
   | { id: string; type: 'list'; style: ListStyle; items: string[] }
-  | { id: string; type: 'divider' }
-  | { id: string; type: 'image'; url: string; alt: string; caption: string; width: ImageWidth }
+  | { id: string; type: 'divider'; style?: DividerStyle; size?: SpacerSize }
+  | { id: string; type: 'image'; url: string; alt: string; caption: string; width: ImageWidth; layout?: ImageLayout; text?: string; side?: ImageSide }
   | { id: string; type: 'video'; url: string; caption: string; captions_url: string; captions_label: string; transcript: string }
   | { id: string; type: 'audio'; url: string; caption: string; transcript: string }
   | { id: string; type: 'file'; url: string; name: string }
@@ -163,6 +178,7 @@ export type Block =
   | { id: string; type: 'page_link'; view_id: string; title: string }
   | LabeledGraphicBlock
   | Blocks3Block
+  | Blocks4Block
   | SurveyBlock;
 
 export type BlockType = Block['type'];
@@ -196,6 +212,9 @@ export const BLOCK_TYPES: BlockType[] = [
   'gallery',
   'table',
   'buttons',
+  'columns',
+  'code',
+  'quote_carousel',
 ];
 
 export interface CourseSettings {
@@ -603,7 +622,7 @@ export function normalizeBlock(raw: unknown): Block | null {
     case 'statement':
       return { id, type: 'statement', text: str(o.text) };
     case 'quote':
-      return { id, type: 'quote', text: str(o.text), cite: str(o.cite) };
+      return { id, type: 'quote', text: str(o.text), cite: str(o.cite), ...quoteExtras(o) };
     case 'callout':
       return { id, type: 'callout', title: str(o.title), text: str(o.text), tone: oneOf(o.tone, ['info', 'tip', 'warning', 'success'], 'info') };
     case 'list':
@@ -614,7 +633,7 @@ export function normalizeBlock(raw: unknown): Block | null {
         items: arr(o.items).map((x) => str(x)),
       };
     case 'divider':
-      return { id, type: 'divider' };
+      return { id, type: 'divider', ...dividerExtras(o) };
     case 'image':
       return {
         id,
@@ -623,6 +642,7 @@ export function normalizeBlock(raw: unknown): Block | null {
         alt: str(o.alt),
         caption: str(o.caption),
         width: oneOf(o.width, ['small', 'medium', 'full'], 'full'),
+        ...imageExtras(o),
       };
     case 'video':
       return { id, type: 'video', url: str(o.url), caption: str(o.caption), ...videoExtras(o) };
@@ -683,6 +703,10 @@ export function normalizeBlock(raw: unknown): Block | null {
       return normalizeBlocks3(o, id);
     case 'survey':
       return normalizeSurveyBlock(o, id);
+    case 'columns':
+    case 'code':
+    case 'quote_carousel':
+      return normalizeBlocks4(o, id);
     case 'page_link':
       return { id, type: 'page_link', view_id: str(o.view_id), title: str(o.title) };
     default:
@@ -991,6 +1015,8 @@ export function cloneBlock(b: Block): Block {
       return cloneBlocks3(copy);
     case 'survey':
       return cloneSurvey(copy);
+    case 'quote_carousel':
+      return cloneBlocks4(copy);
     case 'scenario': {
       const map = new Map<string, string>();
 
@@ -1305,7 +1331,7 @@ export function blankBlock(type: BlockType): Block {
     case 'list':
       return { id, type, style: 'bullet', items: ['', ''] };
     case 'divider':
-      return { id, type };
+      return { id, type, ...blankDividerExtras() };
     case 'image':
       return { id, type, url: '', alt: '', caption: '', width: 'full' };
     case 'video':
@@ -1391,6 +1417,10 @@ export function blankBlock(type: BlockType): Block {
       return blankBlocks3(type, id);
     case 'survey':
       return blankSurveyBlock(id);
+    case 'columns':
+    case 'code':
+    case 'quote_carousel':
+      return blankBlocks4(type, id);
     case 'page_link':
     default:
       return { id, type: 'page_link', view_id: '', title: '' };
@@ -1485,7 +1515,7 @@ export function estimateMinutes(c: Content) {
           lesson += b.cards.length * 10;
           break;
         case 'image':
-          lesson += 10;
+          lesson += blocks4Seconds(b);
           break;
         case 'video':
           lesson += 180;
@@ -1509,6 +1539,11 @@ export function estimateMinutes(c: Content) {
         case 'table':
         case 'buttons':
           lesson += blocks3Seconds(b);
+          break;
+        case 'columns':
+        case 'code':
+        case 'quote_carousel':
+          lesson += blocks4Seconds(b);
           break;
         case 'knowledge_check':
           lesson += 30;
@@ -1699,6 +1734,7 @@ export function validateContent(c: Content): string[] {
       if (b.type === 'knowledge_check') questionProblems(b.question, `A knowledge check in ${name}`, out);
       if (b.type === 'labeled_graphic') labeledGraphicProblems(b, name, out);
       blocks3Problems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out, urlAllowed);
+      blocks4Problems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out, urlAllowed);
       if (b.type === 'survey') surveyProblems(b, `block ${bi + 1} of ${serverLessonName(i, l.title)}`, out);
       if (b.type === 'scenario') {
         if (!b.steps.length) out.push(`A scenario in ${name} needs at least one step.`);
