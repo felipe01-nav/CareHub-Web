@@ -58,6 +58,7 @@ import {
   UploadContext,
   useDragSort,
 } from './CareHubLearningStudioBlocks';
+import { SaveBlockTemplateButton, SaveLessonTemplateButton, TemplatesSection, useBlockTemplates } from './CareHubLearningTemplates';
 import { CareHubModal, ChNote, ChSection, ChSelect } from './CareHubUi';
 
 import type { ExampleCourse } from './CareHubLearningExample';
@@ -1077,6 +1078,7 @@ function Editor({
   });
   const [keeping, setKeeping] = useState(false);
   const uploadTarget = useMemo(() => ({ workspaceId, courseId }), [workspaceId, courseId]);
+  const templates = useBlockTemplates(workspaceId);
   const lessonDrag = useDragSort((from, to) =>
     update((c) => {
       const moved = moveItem(c.lessons, from, to);
@@ -1385,6 +1387,24 @@ function Editor({
     setFocusId(`chs-b-${b.id}`);
   };
 
+  const addBlocks = (lessonId: string, index: number, list: Block[], label: string) => {
+    const old = draftRef.current.lessons.find((l) => l.id === lessonId)?.blocks || [];
+    const near = old[index] || old[index - 1];
+    const ids = new Set(list.map((b) => b.id));
+
+    setBlocks(lessonId, (bs) => [...bs.slice(0, index), ...list, ...bs.slice(index)]);
+    setModal(null);
+    setFocusId(`chs-b-${list[0].id}`);
+    setUndo({
+      label,
+      restore: () => {
+        setBlocks(lessonId, (bs) => bs.filter((b) => !ids.has(b.id)));
+        setSelected({ kind: 'lesson', id: lessonId });
+        if (near) setFocusId(`chs-b-${near.id}`);
+      },
+    });
+  };
+
   const deleteBlock = (lessonId: string, blockId: string) => {
     const blocks = draftRef.current.lessons.find((l) => l.id === lessonId)?.blocks || [];
     const index = blocks.findIndex((b) => b.id === blockId);
@@ -1463,6 +1483,7 @@ function Editor({
             <Button type='button' size='sm' variant='ghost' onClick={() => duplicateLesson(lesson.id)}>
               Duplicate
             </Button>
+            <SaveLessonTemplateButton templates={templates} lesson={lesson} />
             <Button
               type='button'
               size='sm'
@@ -1546,6 +1567,7 @@ function Editor({
                 onGrab={blockDrag.grab(i)}
                 dragging={blockDrag.drag?.from === i}
                 dropEdge={blockDrag.edgeOf(i)}
+                extra={<SaveBlockTemplateButton templates={templates} block={b} />}
               />
             ))
           )}
@@ -2005,7 +2027,9 @@ function Editor({
 
         {review.modal}
         {modal?.kind === 'library' && (
-          <BlockLibrary onPick={(t) => addBlock(modal.lessonId, modal.index, t)} onClose={() => setModal(null)} />
+          <BlockLibrary onPick={(t) => addBlock(modal.lessonId, modal.index, t)} onClose={() => setModal(null)}>
+            <TemplatesSection templates={templates} onAdd={(list, label) => addBlocks(modal.lessonId, modal.index, list, label)} />
+          </BlockLibrary>
         )}
         <PasteTextDialog lessonId={modal?.kind === 'paste' ? modal.lessonId : ''} draft={draft} update={update} setUndo={setUndo} onClose={() => setModal(null)} />
         {modal?.kind === 'preview' && (

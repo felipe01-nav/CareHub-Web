@@ -1359,6 +1359,7 @@ for _name in ["CareHubLearningAssignApi.ts", "CareHubLearningAssign.tsx", "CareH
     EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
 EXTRA_FILES[HERE / "web" / "CareHubLearningPlayer3.tsx"] = "src/components/carehub/CareHubLearningPlayer3.tsx"
 EXTRA_FILES[HERE / "web" / "CareHubLearningOverview.tsx"] = "src/components/carehub/CareHubLearningOverview.tsx"  # Reports → Overview tab
+EXTRA_FILES[HERE / "web" / "CareHubLearningTemplates.tsx"] = "src/components/carehub/CareHubLearningTemplates.tsx"  # Studio → block templates
 EXTRA_FILES[HERE / "web" / "CareHubLearningDrafts.tsx"] = "src/components/carehub/CareHubLearningDrafts.tsx"  # review links + draft comments
 
 if __name__ == "__main__":
