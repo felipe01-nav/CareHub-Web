@@ -1335,6 +1335,7 @@ for _name in [
     "CareHubLearningInteract.tsx",
 ]:
     EXTRA_FILES[HERE / "web" / _name] = "src/components/carehub/" + _name
+EXTRA_FILES[HERE / "web" / "CareHubLearningPaste.tsx"] = "src/components/carehub/CareHubLearningPaste.tsx"
 
 EDITS.setdefault("src/components/app/AppRouter.tsx", []).extend([
     ("import CareHubAnalyticsPage from '@/components/carehub/CareHubAnalytics';\n",
