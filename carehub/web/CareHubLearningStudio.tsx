@@ -41,6 +41,7 @@ import { LinkCourseContext } from './CareHubLearningBlocks3';
 import { dropThensTo, isSide, LessonBranchSettings, SideLessonNote, withBranchFields } from './CareHubLearningBranching';
 import { useStudioReview, WithCommentCount } from './CareHubLearningDrafts';
 import { EXAMPLES } from './CareHubLearningExample';
+import { describeChange, HistoryButtons, HistoryStatus, historyKey, useCourseHistory, useLanding } from './CareHubLearningHistory';
 import { INTERACT_KIND_OPTIONS } from './CareHubLearningInteract';
 import { PasteTextDialog } from './CareHubLearningPaste';
 import { CareHubLearningPlayer } from './CareHubLearningPlayer';
@@ -904,7 +905,8 @@ function VersionsModal({
   versions: VersionRow[];
   onPreview: (content: Content, label: string) => void;
   beforeRestore: () => Promise<void>;
-  onRestored: () => void;
+  /** After the server has put version `version` into the draft. */
+  onRestored: (version: number) => Promise<void>;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState<number | null>(null);
@@ -931,7 +933,7 @@ function VersionsModal({
     try {
       await beforeRestore();
       await lapi.rollback(workspaceId, courseId, v.version);
-      onRestored();
+      await onRestored(v.version);
     } catch (e) {
       setError(lErrorText(e));
       setBusy(null);
@@ -1165,8 +1167,9 @@ export function LearningStudioEditor({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * "Block deleted. Undo" at the bottom of the editor, until the Editor takes it away (see offerUndo). A status region
- * that is always on the page reads it out (WCAG 4.1.3); Undo and × put focus back where it was before.
+ * "Block deleted. Undo" at the bottom of the editor, until the Editor takes it away (see offerUndo); its Undo takes
+ * back that step of the undo history. A status region that is always on the page reads it out (WCAG 4.1.3); Undo and
+ * × put focus back where it was before.
  */
 function UndoToast({ undo, setUndo }: { undo: Undo | null; setUndo: Dispatch<SetStateAction<Undo | null>> }) {
   // Where focus was before it came into the message, to go back to when the message closes.
@@ -1234,11 +1237,15 @@ function Editor({
   );
   const [modal, setModal] = useState<EditorModal>(null);
   const [undo, setUndo] = useState<Undo | null>(null);
-  // The Undo message stays until the course changes again (Paste does the same for its own), so a late Undo can't
-  // throw away later work, e.g. what was typed into blocks it would remove.
+  // The Undo message stays until the course changes again, so its Undo always takes back the newest step.
   const offered = useRef<{ undo: Undo | null; after: Content | null }>({ undo: null, after: null });
+  // Undo / redo for the whole course (CareHubLearningHistory): empty each time the editor opens, never saved.
+  const history = useCourseHistory();
+  const [said, setSaid] = useState({ text: '', n: 0 });
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [focusId, setFocusId] = useState('');
   const refocus = useRefocus();
+  const land = useLanding(() => firstControl(panelRef.current));
   // drafts: review link + comments (header buttons, open-comment counts under blocks, their windows).
   const review = useStudioReview(workspaceId, courseId, draft, (lessonId, blockId) => {
     setSelected({ kind: 'lesson', id: lessonId });
@@ -1354,10 +1361,8 @@ function Editor({
 
   runSaveRef.current = runSave;
 
-  const update = (fn: (c: Content) => Content) => {
-    const next = fn(draftRef.current);
-
-    if (next === draftRef.current) return;
+  /** Shows `next` and saves it soon. */
+  const put = (next: Content) => {
     draftRef.current = next;
     dirtyRef.current = true;
     setDraft(next);
@@ -1366,8 +1371,54 @@ function Editor({
     schedule(1500);
   };
 
+  /** Every change goes through here and is one undo step; `label` names a step made of many edits ("paste text"). */
+  const update = (fn: (c: Content) => Content, label?: string) => {
+    const cur = draftRef.current;
+    const next = fn(cur);
+
+    if (next === cur) return;
+    history.record(cur, next, label);
+    put(next);
+  };
+
+  /** Undo (back) or redo: opens the panel the change is in, scrolls to it, and keeps focus on the page. */
+  const travel = (back: boolean, how: 'button' | 'key' | 'toast') => {
+    const step = back ? history.undo() : history.redo();
+
+    if (!step) return;
+    const cur = draftRef.current;
+    const next = back ? step.before : step.after;
+    const where = describeChange(cur, next);
+    const want: Selected = where.spot || selected;
+    const gone = want.kind === 'lesson' && !next.lessons.some((l) => l.id === want.id);
+    // The open lesson is gone: the one that was nearest to it.
+    const i = gone ? cur.lessons.findIndex((l) => want.kind === 'lesson' && l.id === want.id) : -1;
+    const near = gone ? next.lessons[Math.min(Math.max(i, 0), next.lessons.length - 1)] : undefined;
+    const sel: Selected = !gone ? want : near ? { kind: 'lesson', id: near.id } : { kind: 'settings' };
+    const keyOf = (x: Selected) => (x.kind === 'lesson' ? `lesson:${x.id}` : x.kind);
+
+    put(next);
+    if (keyOf(sel) !== keyOf(selected)) setSelected(sel);
+    setSaid((x) => ({ text: `${back ? 'Undone' : 'Redone'}: ${step.label}`, n: x.n + 1 }));
+    land(where.target);
+    if (how === 'button') refocus.later(back ? 'undo' : 'redo', back ? 'redo' : 'undo');
+    if (how === 'toast' && where.target) setFocusId(where.target);
+  };
+
+  const travelRef = useRef(travel);
+
+  travelRef.current = travel;
+
   /** Call straight after the change it undoes: the message goes with the next change, a newer message, Undo or ×. */
-  const offerUndo = (u: Undo) => {
+  const offerUndo = (label: string) => {
+    const id = history.top();
+    const u: Undo = {
+      label,
+      restore: () => {
+        if (history.top() === id) travelRef.current(true, 'toast');
+      },
+    };
+
     offered.current = { undo: u, after: draftRef.current };
     setUndo(u);
   };
@@ -1394,6 +1445,13 @@ function Editor({
         e.preventDefault();
         window.clearTimeout(timerRef.current);
         void runSaveRef.current();
+        return;
+      }
+      const dir = historyKey(e);
+
+      if (dir) {
+        e.preventDefault();
+        travelRef.current(dir === 'undo', 'key');
       }
     };
 
@@ -1489,11 +1547,39 @@ function Editor({
     if (savingRef.current) await savingRef.current;
   };
 
+  /** The server has put an old version into the draft: show it as one undo step (Undo saves the draft from before). */
+  const restored = async (version: number) => {
+    let fresh: StudioCourse;
+
+    try {
+      fresh = await lapi.studioGet(workspaceId, courseId);
+    } catch {
+      onReload();
+      return;
+    }
+
+    const before = draftRef.current;
+
+    baseRef.current = fresh.updated_ms;
+    setMeta(metaOf(fresh));
+    blockedRef.current = '';
+    dirtyRef.current = false;
+    window.clearTimeout(timerRef.current);
+    lastErrorRef.current = '';
+    setSaveError('');
+    setProblem('');
+    setSave('saved');
+    draftRef.current = fresh.draft;
+    setDraft(fresh.draft);
+    history.record(before, fresh.draft, `restore version ${version}`);
+    setModal(null);
+  };
+
   // ---- editing helpers -------------------------------------------------------------------------
 
   const setSettings = (patch: Partial<CourseSettings>) => update((c) => ({ ...c, settings: { ...c.settings, ...patch } }));
 
-  const setLesson = (id: string, fn: (l: Lesson) => Lesson) =>
+  const setLesson = (id: string, fn: (l: Lesson) => Lesson, label?: string) =>
     update((c) => {
       let changed = false;
       const next = c.lessons.map((l) => {
@@ -1505,14 +1591,18 @@ function Editor({
       });
 
       return changed ? { ...c, lessons: next } : c;
-    });
+    }, label);
 
-  const setBlocks = (id: string, fn: (b: Block[]) => Block[]) =>
-    setLesson(id, (l) => {
-      const blocks = fn(l.blocks);
+  const setBlocks = (id: string, fn: (b: Block[]) => Block[], label?: string) =>
+    setLesson(
+      id,
+      (l) => {
+        const blocks = fn(l.blocks);
 
-      return blocks === l.blocks ? l : { ...l, blocks };
-    });
+        return blocks === l.blocks ? l : { ...l, blocks };
+      },
+      label
+    );
 
   const setQuiz = (fn: (q: Quiz) => Quiz) => update((c) => ({ ...c, quiz: fn(c.quiz) }));
 
@@ -1574,22 +1664,12 @@ function Editor({
     setFocusId(`chs-b-${b.id}`);
   };
 
+  /** A template's blocks: one undo step. */
   const addBlocks = (lessonId: string, index: number, list: Block[], label: string) => {
-    const old = draftRef.current.lessons.find((l) => l.id === lessonId)?.blocks || [];
-    const near = old[index] || old[index - 1];
-    const ids = new Set(list.map((b) => b.id));
-
-    setBlocks(lessonId, (bs) => [...bs.slice(0, index), ...list, ...bs.slice(index)]);
+    setBlocks(lessonId, (bs) => [...bs.slice(0, index), ...list, ...bs.slice(index)], 'add template');
     setModal(null);
     setFocusId(`chs-b-${list[0].id}`);
-    offerUndo({
-      label,
-      restore: () => {
-        setBlocks(lessonId, (bs) => bs.filter((b) => !ids.has(b.id)));
-        setSelected({ kind: 'lesson', id: lessonId });
-        if (near) setFocusId(`chs-b-${near.id}`);
-      },
-    });
+    offerUndo(label);
   };
 
   const deleteBlock = (lessonId: string, blockId: string) => {
@@ -1597,20 +1677,12 @@ function Editor({
     const index = blocks.findIndex((b) => b.id === blockId);
 
     if (index < 0) return;
-    const block = blocks[index];
     const near = blocks[index + 1] || blocks[index - 1];
 
     setBlocks(lessonId, (bs) => bs.filter((b) => b.id !== blockId));
     if (near) setFocusId(`chs-b-${near.id}`);
     else refocus.later('add-block');
-    offerUndo({
-      label: 'Block deleted.',
-      restore: () => {
-        setBlocks(lessonId, (bs) => (bs.some((b) => b.id === block.id) ? bs : insertAt(bs, index, block)));
-        setSelected({ kind: 'lesson', id: lessonId });
-        setFocusId(`chs-b-${block.id}`);
-      },
-    });
+    offerUndo('Block deleted.');
   };
 
   const deleteQuestion = (questionId: string) => {
@@ -1618,20 +1690,12 @@ function Editor({
     const index = qs.findIndex((q) => q.id === questionId);
 
     if (index < 0) return;
-    const question = qs[index];
     const near = qs[index + 1] || qs[index - 1];
 
     setQuestions((list) => list.filter((q) => q.id !== questionId));
     if (near) setFocusId(`chs-q-${near.id}`);
     else refocus.later(`add-question:${QUESTION_BUTTONS[0].value}`);
-    offerUndo({
-      label: 'Question deleted.',
-      restore: () => {
-        setQuestions((list) => (list.some((q) => q.id === question.id) ? list : insertAt(list, index, question)));
-        setSelected({ kind: 'quiz' });
-        setFocusId(`chs-q-${question.id}`);
-      },
-    });
+    offerUndo('Question deleted.');
   };
 
   const moveQuestion = (id: string, delta: number) => {
@@ -2187,15 +2251,19 @@ function Editor({
         <div className='flex flex-col gap-2'>
           <div className='flex items-center gap-2'>
             <BackToStudio onClick={() => navigate(STUDIO_PATH)} />
-            <span
-              role='status'
-              aria-live='polite'
-              title={saveError || undefined}
-              className={cn('ml-auto text-xs', save === 'retrying' || problem ? 'text-text-error' : 'text-text-tertiary')}
-              data-testid='carehub-learning-save-status'
-            >
-              {statusText}
-            </span>
+            <div className='ml-auto flex items-center gap-2'>
+              <HistoryButtons history={history} onUndo={() => travel(true, 'button')} onRedo={() => travel(false, 'button')} reg={refocus.reg} />
+              <span
+                role='status'
+                aria-live='polite'
+                title={saveError || undefined}
+                className={cn('text-xs', save === 'retrying' || problem ? 'text-text-error' : 'text-text-tertiary')}
+                data-testid='carehub-learning-save-status'
+              >
+                {statusText}
+              </span>
+            </div>
+            <HistoryStatus text={said.text} n={said.n} />
           </div>
           <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
             <h1 className='min-w-0 max-w-full break-words text-xl font-semibold'>{draft.title.trim() || 'Untitled course'}</h1>
@@ -2254,7 +2322,9 @@ function Editor({
 
         <div className={cn(narrow ? 'flex flex-col gap-4' : 'grid grid-cols-[250px_minmax(0,1fr)] items-start gap-6')}>
           {narrow ? picker : outline}
-          <div className='min-w-0'>{panel}</div>
+          <div ref={panelRef} className='min-w-0'>
+            {panel}
+          </div>
         </div>
 
         <UndoToast undo={undo} setUndo={setUndo} />
@@ -2265,7 +2335,13 @@ function Editor({
             <TemplatesSection templates={templates} onAdd={(list, label) => addBlocks(modal.lessonId, modal.index, list, label)} />
           </BlockLibrary>
         )}
-        <PasteTextDialog lessonId={modal?.kind === 'paste' ? modal.lessonId : ''} draft={draft} update={update} setUndo={setUndo} onClose={() => setModal(null)} />
+        <PasteTextDialog
+          lessonId={modal?.kind === 'paste' ? modal.lessonId : ''}
+          draft={draft}
+          update={update}
+          onAdded={offerUndo}
+          onClose={() => setModal(null)}
+        />
         {modal?.kind === 'preview' && (
           <PreviewModal
             workspaceId={workspaceId}
@@ -2293,7 +2369,7 @@ function Editor({
             versions={meta.versions}
             onPreview={(content, label) => setModal({ kind: 'preview', content, label, back: 'versions' })}
             beforeRestore={beforeRestore}
-            onRestored={onReload}
+            onRestored={restored}
             onClose={() => setModal(null)}
           />
         )}
