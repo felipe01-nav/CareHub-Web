@@ -74,7 +74,7 @@ export const BLOCK_GROUPS: { title: string; types: BlockType[] }[] = [
   { title: 'Links', types: ['page_link', 'buttons'] },
 ];
 
-export function BlockLibrary({ onPick, onClose }: { onPick: (type: BlockType) => void; onClose: () => void }) {
+export function BlockLibrary({ onPick, onClose, children }: { onPick: (t: BlockType) => void; onClose: () => void; children?: ReactNode }) {
   return (
     <CareHubModal title='Add a block' wide onClose={onClose} testId='carehub-learning-block-library'>
       <div className='flex flex-col gap-4'>
@@ -102,6 +102,7 @@ export function BlockLibrary({ onPick, onClose }: { onPick: (type: BlockType) =>
             </div>
           </div>
         ))}
+        {children}
       </div>
     </CareHubModal>
   );
@@ -1613,6 +1614,7 @@ export function BlockCard({
   onGrab,
   dragging,
   dropEdge = null,
+  extra,
 }: {
   block: Block;
   index: number;
@@ -1626,6 +1628,7 @@ export function BlockCard({
   onGrab?: (e: ReactPointerEvent<HTMLElement>) => void;
   dragging?: boolean;
   dropEdge?: DropEdge;
+  extra?: ReactNode;
 }) {
   const info = BLOCK_INFO[block.type];
 
@@ -1652,6 +1655,7 @@ export function BlockCard({
         <IconButton label='Duplicate' onClick={onDuplicate}>
           <CopyIcon />
         </IconButton>
+        {extra}
         <IconButton label='Add a block below' onClick={onAddBelow}>
           ＋
         </IconButton>
