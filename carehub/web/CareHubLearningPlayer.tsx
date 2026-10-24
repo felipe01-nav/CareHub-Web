@@ -37,6 +37,23 @@ import {
 } from './CareHubLearningApi';
 import { BlockView, Chip, CourseCover, NarrowContext, ProgressBar, QuestionView, RichText } from './CareHubLearningBlocks';
 import { JumpArea } from './CareHubLearningBlocks3';
+import {
+  branchBrowseNext,
+  branchLocks,
+  branchNext,
+  branchPrev,
+  CHOOSE,
+  ChooseNote,
+  counts,
+  isSide,
+  lessonPlace,
+  mainCount,
+  shownLessons,
+  SideLessonNote,
+  SideMark,
+  thenOf,
+  usesBranching,
+} from './CareHubLearningBranching';
 import { isInteractKind } from './CareHubLearningInteract';
 import { feedbackMap, ownQuestions, pickedFeedbackList, previewDrawn, uniqueQuestions } from './CareHubLearningQbank';
 import { CourseSearch } from './CareHubLearningPlayer3';
@@ -57,6 +74,7 @@ import type {
   QuizResponse,
 } from './CareHubLearningApi';
 import type { BlockCtx } from './CareHubLearningBlocks';
+import type { BranchProgress, ShownLesson } from './CareHubLearningBranching';
 import type { SavedSurvey, SurveyAnswers, SurveyBlock } from './CareHubLearningQbank';
 
 type View = { kind: 'intro' } | { kind: 'lesson'; lessonId: string } | { kind: 'quiz' } | { kind: 'done' };
@@ -129,7 +147,12 @@ function initialView(course: PlayCourse, enr: Enrollment | null, preview: boolea
   if (enr.awaiting_ack || isFinished(enr)) return { kind: 'done' };
   const lessons = course.lessons;
   const done = (id: string) => Boolean(enr.progress.lessons[id]?.done);
-  const openable = (i: number) => !course.settings.sequential || lessons.slice(0, i).every((l) => done(l.id));
+  // Branching (side lessons, "After this lesson"): courses without it keep the old paths.
+  const branching = usesBranching(lessons);
+  const bp: BranchProgress = { done, opened: (id) => Boolean(enr.progress.lessons[id]) };
+  const locks = branching ? branchLocks(lessons, course.settings.sequential, bp) : [];
+  const openable = (i: number) =>
+    branching ? !locks[i] : !course.settings.sequential || lessons.slice(0, i).every((l) => done(l.id));
   const pos = enr.progress.position;
 
   if (pos) {
@@ -138,7 +161,8 @@ function initialView(course: PlayCourse, enr: Enrollment | null, preview: boolea
     if (i >= 0 && openable(i)) return { kind: 'lesson', lessonId: pos.lesson_id };
   }
 
-  const next = lessons.find((l) => !done(l.id));
+  const nextId = branching ? branchNext(lessons, null, bp, (i) => locks[i], true) : '';
+  const next = branching ? lessons.find((l) => l.id === nextId) : lessons.find((l) => !done(l.id));
 
   if (next) return { kind: 'lesson', lessonId: next.id };
   if (course.quiz.enabled && effectiveCompletion(course) !== 'all_lessons') return { kind: 'quiz' };
@@ -151,12 +175,14 @@ function localProgress(
   lessonsDone: number,
   quizPassed: boolean,
   outOfAttempts: boolean,
-  acked: boolean
+  acked: boolean,
+  /** Branching: side lessons only count once opened. */
+  lessonTotal = course.lessons.length
 ): { status: LearnStatus; percent: number; awaiting_ack: boolean } {
   const completion = effectiveCompletion(course);
   const needLessons = completion !== 'pass_quiz';
   const needQuiz = completion !== 'all_lessons';
-  const total = course.lessons.length;
+  const total = lessonTotal;
   const met = (!needLessons || lessonsDone >= total) && (!needQuiz || quizPassed);
   const ack = course.settings.require_ack;
   const units = (needLessons ? total : 0) + (needQuiz ? 1 : 0) + (ack ? 1 : 0);
@@ -249,6 +275,7 @@ function NoticeBox({ text, onClose }: { text: string; onClose: () => void }) {
 
 function Intro({ course, onStart, busy, narrow }: { course: PlayCourse; onStart: () => void; busy: boolean; narrow: boolean }) {
   const minutes = course.est_minutes || estimateMinutes(course);
+  const inside = course.lessons.filter((l) => !isSide(l)); // side lessons aren't listed
 
   return (
     <div className='mx-auto w-full max-w-[760px]'>
@@ -264,7 +291,7 @@ function Intro({ course, onStart, busy, narrow }: { course: PlayCourse; onStart:
             </p>
           )}
           <div className='mt-3 flex flex-wrap gap-1.5'>
-            <Chip>{plural(course.lessons.length, 'lesson')}</Chip>
+            <Chip>{plural(mainCount(course.lessons), 'lesson')}</Chip>
             {minutes > 0 && <Chip>About {formatMinutes(minutes)}</Chip>}
             {course.quiz.enabled && <Chip tone='purple'>Final quiz · pass {course.settings.pass_mark}%</Chip>}
             {course.settings.sequential && <Chip>Lessons in order</Chip>}
@@ -285,7 +312,7 @@ function Intro({ course, onStart, busy, narrow }: { course: PlayCourse; onStart:
         <div className='mt-5'>
           <div className='mb-2 text-sm font-semibold'>What’s inside</div>
           <ol className='flex flex-col gap-1.5'>
-            {course.lessons.map((l, i) => (
+            {inside.map((l, i) => (
               <li key={l.id} className='flex gap-2 text-sm text-text-secondary'>
                 <span className='w-5 shrink-0 text-text-tertiary'>{i + 1}.</span>
                 <span className='min-w-0 flex-1'>{l.title.trim() || `Lesson ${i + 1}`}</span>
@@ -320,6 +347,8 @@ function Outline({
   percent,
   quizPassed,
   quizLocked,
+  rows,
+  lessonTotal,
 }: {
   course: PlayCourse;
   view: View;
@@ -334,12 +363,15 @@ function Outline({
   percent: number;
   quizPassed: boolean;
   quizLocked: boolean;
+  /** The lessons to list (side lessons once opened) and how many count. */
+  rows: ShownLesson[];
+  lessonTotal: number;
 }) {
   const summary = (
     <div>
       <div className='flex items-center gap-2 text-xs text-text-tertiary'>
         <span className='flex-1'>
-          {doneCount} of {plural(course.lessons.length, 'lesson')} done
+          {doneCount} of {plural(lessonTotal, 'lesson')} done
         </span>
         <span className='font-medium text-text-secondary'>{percent}%</span>
       </div>
@@ -348,7 +380,7 @@ function Outline({
   );
   const list = (
     <nav aria-label='Lessons' className='flex flex-col gap-0.5'>
-      {course.lessons.map((l, i) => {
+      {rows.map(({ lesson: l, index: i, number, side }) => {
         const done = isDone(l.id);
         const active = view.kind === 'lesson' && view.lessonId === l.id;
         const locked = !done && isLocked(i);
@@ -369,9 +401,12 @@ function Outline({
             onClick={() => onOpen({ kind: 'lesson', lessonId: l.id })}
           >
             <span className={cn('w-5 shrink-0 text-center', done && 'chl-mark-right font-semibold')} aria-hidden='true'>
-              {done ? '✓' : locked ? '🔒' : i + 1}
+              {done ? '✓' : locked ? '🔒' : side ? <SideMark /> : number}
             </span>
-            <span className='min-w-0 flex-1 break-words'>{l.title.trim() || `Lesson ${i + 1}`}</span>
+            <span className='min-w-0 flex-1 break-words'>
+              {l.title.trim() || `Lesson ${number || i + 1}`}
+              {side && <SideLessonNote />}
+            </span>
             <span className='sr-only'>{done ? ' (done)' : locked ? ' (locked)' : ''}</span>
           </button>
         );
@@ -411,7 +446,7 @@ function Outline({
           </svg>
           <span className='min-w-0 flex-1 truncate'>Lessons</span>
           <span className='text-xs text-text-tertiary'>
-            {doneCount}/{course.lessons.length} · {percent}%
+            {doneCount}/{lessonTotal} · {percent}%
           </span>
           <svg
             width='12'
@@ -498,7 +533,7 @@ function LessonView({
   return (
     <article>
       <div className='mb-1 text-xs text-text-tertiary'>
-        Lesson {index + 1} of {course.lessons.length}
+        {lessonPlace(course.lessons, index)}
         {isDone ? ' · Done ✓' : ''}
       </div>
       <h1 className='mb-5 text-2xl font-semibold leading-tight'>{lesson.title.trim() || `Lesson ${index + 1}`}</h1>
@@ -548,6 +583,7 @@ function LessonFooter({
   onPrev,
   preview,
   onSkip,
+  choose = false,
 }: {
   requiredMs: number;
   getActive: () => number;
@@ -560,6 +596,8 @@ function LessonFooter({
   onPrev: (() => void) | null;
   preview: boolean;
   onSkip: () => void;
+  /** "Let them choose": no Next button, people pick an option in the lesson. */
+  choose?: boolean;
 }) {
   const [, setTick] = useState(0);
   const remaining = isDone ? 0 : Math.max(0, requiredMs - getActive());
@@ -581,7 +619,9 @@ function LessonFooter({
           </Button>
         )}
         <div className='flex-1' />
-        {isDone ? (
+        {choose ? (
+          <ChooseNote />
+        ) : isDone ? (
           <Button type='button' size='lg' onClick={onNext}>
             {nextLabel}
           </Button>
@@ -1036,6 +1076,8 @@ function PlayerShell({
   const [surveys, setSurveys] = useState<Record<string, SavedSurvey>>(() => initialCourse.surveys || {});
   const [extraKc, setExtraKc] = useState<Record<string, KcRecord>>({});
   const [extraLessons, setExtraLessons] = useState<string[]>([]);
+  const [openedHere, setOpenedHere] = useState<string[]>([]); // branching: lessons opened during this visit
+  const [cameFrom, setCameFrom] = useState<Record<string, string>>({}); // branching: side lesson -> opened from
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -1077,6 +1119,10 @@ function PlayerShell({
   const lessons = course.lessons;
   const serverLessons = enr?.progress.lessons || {};
   const lessonDone = (id: string) => Boolean(serverLessons[id]?.done) || extraLessons.includes(id);
+  // Branching (side lessons, "After this lesson"): courses without it keep the old paths.
+  const branching = usesBranching(lessons);
+  const lessonOpened = (id: string) => Boolean(serverLessons[id]) || openedHere.includes(id) || lessonDone(id);
+  const markOpened = (id: string) => setOpenedHere((s) => (s.includes(id) ? s : [...s, id]));
   const completion = effectiveCompletion(course);
   const needLessons = completion !== 'pass_quiz';
   const needQuiz = course.quiz.enabled && completion !== 'all_lessons';
@@ -1210,12 +1256,16 @@ function PlayerShell({
 
       positionRef.current = { lesson_id: v.lessonId, block_id: first ? first.id : '' };
       enqueue([{ kind: 'lesson_open', lesson_id: v.lessonId, ts_ms: now }]);
+      markOpened(v.lessonId);
     } else if (v.kind === 'quiz') {
       enqueue([{ kind: 'lesson_open', lesson_id: '_quiz', ts_ms: now }]);
     }
   };
 
   const openView = (v: View) => {
+    const from = view.kind === 'lesson' ? view.lessonId : '';
+
+    if (branching && v.kind === 'lesson' && from && from !== v.lessonId) setCameFrom((m) => ({ ...m, [v.lessonId]: from }));
     emitHeartbeat();
     beginTracking(v);
     setView(v);
@@ -1360,7 +1410,9 @@ function PlayerShell({
   const kcMap = useMemo(() => ({ ...(enr?.progress.kc || {}), ...extraKc }), [enr, extraKc]);
   const doneIds = new Set(lessons.filter((l) => lessonDone(l.id)).map((l) => l.id));
   const doneCount = doneIds.size;
-  const allLessonsDone = doneCount >= lessons.length;
+  const bp: BranchProgress = { done: (id) => doneIds.has(id), opened: lessonOpened };
+  const lessonTotal = branching ? lessons.filter((l) => counts(l, bp)).length : lessons.length;
+  const allLessonsDone = doneCount >= lessonTotal;
   const quizPassed = isPreview
     ? pq.passed
     : quizPassedHere ||
@@ -1383,9 +1435,22 @@ function PlayerShell({
   })();
   const quizLessonsLock = /lesson/i.test(quizLock);
 
-  const isLocked = (index: number) => course.settings.sequential && lessons.slice(0, index).some((l) => !doneIds.has(l.id));
+  const locks = branching ? branchLocks(lessons, course.settings.sequential, bp) : [];
+  const isLocked = (index: number) =>
+    branching ? Boolean(locks[index]) : course.settings.sequential && lessons.slice(0, index).some((l) => !doneIds.has(l.id));
+  const shown = shownLessons(lessons, bp, view.kind === 'lesson' ? view.lessonId : '');
 
   const nextAfter = (fromId: string | null, done: Set<string>): View => {
+    if (branching) {
+      const p: BranchProgress = { done: (id) => done.has(id), opened: lessonOpened };
+      const lk = branchLocks(lessons, course.settings.sequential, p);
+      const id = branchNext(lessons, fromId, p, (i) => lk[i], needLessons);
+
+      if (id === CHOOSE && fromId) return { kind: 'lesson', lessonId: fromId };
+      if (id && id !== CHOOSE) return { kind: 'lesson', lessonId: id };
+      return needQuiz && !quizPassed && quizMeta.left !== 0 ? { kind: 'quiz' } : { kind: 'done' };
+    }
+
     const idx = fromId ? lessons.findIndex((l) => l.id === fromId) : -1;
     const after = lessons.slice(idx + 1).find((l) => !done.has(l.id));
 
@@ -1399,13 +1464,17 @@ function PlayerShell({
 
   const afterQuiz = (): View => {
     if (outOfAttempts) return { kind: 'done' };
-    const undone = needLessons ? lessons.find((l) => !doneIds.has(l.id)) : undefined;
+    const undone = needLessons
+      ? lessons.find((l, i) => !doneIds.has(l.id) && (!branching || (counts(l, bp) && !isLocked(i))))
+      : undefined;
 
     return undone ? { kind: 'lesson', lessonId: undone.id } : { kind: 'done' };
   };
 
   const firstLessonView = (): View => {
-    const undone = lessons.find((l) => !doneIds.has(l.id)) || lessons[0];
+    const undone = branching
+      ? lessons.find((l, i) => counts(l, bp) && !doneIds.has(l.id) && !isLocked(i)) || shown[0]?.lesson
+      : lessons.find((l) => !doneIds.has(l.id)) || lessons[0];
 
     return undone ? { kind: 'lesson', lessonId: undone.id } : { kind: 'intro' };
   };
@@ -1472,7 +1541,14 @@ function PlayerShell({
     },
   };
 
-  const liveProgress = localProgress(course, doneCount, quizPassed, quizMeta.left === 0, isPreview ? previewAck : Boolean(enr?.ack_ms));
+  const liveProgress = localProgress(
+    course,
+    doneCount,
+    quizPassed,
+    quizMeta.left === 0,
+    isPreview ? previewAck : Boolean(enr?.ack_ms),
+    lessonTotal
+  );
   const status: LearnStatus = isPreview ? liveProgress.status : enr?.status || 'in_progress';
   const awaitingAck = isPreview ? liveProgress.awaiting_ack : Boolean(enr?.awaiting_ack);
   const percent = isPreview
@@ -1535,14 +1611,16 @@ function PlayerShell({
     if (nextBlock) setScrollTarget(nextBlock.id);
   };
 
-  const completeLesson = async (lesson: Lesson) => {
+  const completeLesson = async (lesson: Lesson, to = ''): Promise<boolean> => {
     const done = new Set(doneIds);
 
     done.add(lesson.id);
+    const target: View = to ? { kind: 'lesson', lessonId: to } : nextAfter(lesson.id, done);
+
     if (isPreview) {
       setExtraLessons((xs) => (xs.includes(lesson.id) ? xs : [...xs, lesson.id]));
-      openView(nextAfter(lesson.id, done));
-      return;
+      openView(target);
+      return true;
     }
 
     emitHeartbeat();
@@ -1552,21 +1630,22 @@ function PlayerShell({
     setBusy(true);
     const res = await flush();
 
-    if (!mounted.current) return;
+    if (!mounted.current) return false;
     setBusy(false);
     const refused =
       rejectedLessons.current.has(lesson.id) ||
       res.rejected.some((r) => r.event.kind === 'lesson_complete' && r.event.lesson_id === lesson.id);
 
-    if (refused) return; // handleRejected already explained why
+    if (refused) return false; // handleRejected already explained why
     if (!res.ok && !res.transient) {
       setExtraLessons((xs) => xs.filter((x) => x !== lesson.id));
       setNotice(res.error);
-      return;
+      return false;
     }
 
-    openView(nextAfter(lesson.id, done));
+    openView(target);
     if (res.transient) setNotice(OFFLINE_TEXT);
+    return true;
   };
 
   const currentQuestions = useMemo(
@@ -1659,10 +1738,17 @@ function PlayerShell({
     const done = new Set(doneIds);
 
     done.add(lesson.id);
-    const target = isDone && lessons[index + 1] ? ({ kind: 'lesson', lessonId: lessons[index + 1].id } as View) : nextAfter(lesson.id, done);
+    const browse = branching && isDone ? branchBrowseNext(lessons, index, bp, isLocked, needLessons) : '';
+    const target =
+      browse && browse !== CHOOSE
+        ? ({ kind: 'lesson', lessonId: browse } as View)
+        : !branching && isDone && lessons[index + 1]
+          ? ({ kind: 'lesson', lessonId: lessons[index + 1].id } as View)
+          : nextAfter(lesson.id, done);
     const nextLabel = target.kind === 'lesson' ? 'Next lesson →' : target.kind === 'quiz' ? 'Go to the quiz →' : 'Finish course ✓';
     const waitLabel = target.kind === 'lesson' ? 'Next lesson' : target.kind === 'quiz' ? 'Quiz' : 'Finish';
-    const prev = index > 0 ? lessons[index - 1] : undefined;
+    const prevIndex = branching ? branchPrev(lessons, index, cameFrom[lesson.id]) : index - 1;
+    const prev = prevIndex >= 0 ? lessons[prevIndex] : undefined;
 
     return (
       <LessonFooter
@@ -1675,11 +1761,32 @@ function PlayerShell({
         waitLabel={waitLabel}
         onComplete={() => void completeLesson(lesson)}
         onNext={() => openView(target)}
-        onPrev={prev && (isPreview || !isLocked(index - 1)) ? () => openView({ kind: 'lesson', lessonId: prev.id }) : null}
+        onPrev={prev && (isPreview || !isLocked(prevIndex)) ? () => openView({ kind: 'lesson', lessonId: prev.id }) : null}
         preview={isPreview}
         onSkip={() => skipWait(lesson)}
+        choose={branching && thenOf(lesson) === CHOOSE}
       />
     );
+  };
+
+  // Branching: search only the lessons this person can see (side lessons once opened).
+  const shownKey = branching ? shown.map((r) => r.index).join(',') : '';
+  const searchLessons = useMemo(() => (shownKey ? shownKey.split(',').map((i) => lessons[Number(i)]) : lessons), [lessons, shownKey]);
+
+  // Branching: on a "Let them choose" lesson, picking an option finishes the lesson (its minimum time still applies),
+  // then opens the lesson picked. Locks are worked out as if it were done already.
+  const chooseLesson =
+    branching && currentLesson && thenOf(currentLesson) === CHOOSE && !doneIds.has(currentLesson.id) ? currentLesson : null;
+  const jumpLocks = chooseLesson
+    ? branchLocks(lessons, course.settings.sequential, { ...bp, done: (id) => id === chooseLesson.id || doneIds.has(id) })
+    : locks;
+  const jumpOpen = (lessonId: string): void | string | Promise<boolean> => {
+    if (!chooseLesson) return openView({ kind: 'lesson', lessonId });
+    const needMs = requiredSeconds(course, chooseLesson) * 1000;
+
+    if (needMs - getActive(chooseLesson.id) > 1000) return `Take your time — this lesson needs at least ${formatClock(needMs / 1000)}.`;
+    if (busy) return Promise.resolve(false);
+    return completeLesson(chooseLesson, lessonId);
   };
 
   const page = (
@@ -1709,7 +1816,7 @@ function PlayerShell({
             <div className='min-w-0 flex-1 truncate text-sm text-text-secondary'>{showIntro ? '' : course.title.trim() || 'Untitled course'}</div>
             {!showIntro && <Chip tone={chip.tone}>{chip.label}</Chip>}
             {!showIntro && view.kind !== 'quiz' && (
-              <CourseSearch lessons={lessons} shownBlocks={(l) => splitAtGate(l, doneBlocks).visible} />
+              <CourseSearch lessons={searchLessons} shownBlocks={(l) => splitAtGate(l, doneBlocks).visible} />
             )}
           </div>
         )}
@@ -1736,6 +1843,8 @@ function PlayerShell({
               percent={percent}
               quizPassed={quizPassed}
               quizLocked={quizLessonsLock}
+              rows={shown}
+              lessonTotal={lessonTotal}
             />
             <div className='min-w-0 flex-1'>
               {view.kind === 'lesson' &&
@@ -1782,7 +1891,7 @@ function PlayerShell({
                   score={isPreview ? pq.best : enr?.score ?? null}
                   timeMs={isPreview ? localTime : enr?.time_ms || 0}
                   completedMs={isPreview ? null : enr?.completed_ms ?? null}
-                  lessonsLeft={needLessons ? Math.max(0, lessons.length - doneCount) : 0}
+                  lessonsLeft={needLessons ? Math.max(0, lessonTotal - doneCount) : 0}
                   quizNeeded={needQuiz && !quizPassed && !outOfAttempts}
                   quizOptional={course.quiz.enabled && !needQuiz && !quizPassed && quizMeta.left !== 0}
                   busy={busy}
@@ -1790,7 +1899,7 @@ function PlayerShell({
                   onAck={() => void acknowledge()}
                   onExit={onExit}
                   exitLabel={doneExitLabel(exitLabel)}
-                  onReview={() => openView(lessons[0] ? { kind: 'lesson', lessonId: lessons[0].id } : { kind: 'intro' })}
+                  onReview={() => openView(shown[0] ? { kind: 'lesson', lessonId: shown[0].lesson.id } : { kind: 'intro' })}
                   onNext={() => openView(nextAfter(null, doneIds))}
                   onQuiz={() => openView({ kind: 'quiz' })}
                   preview={isPreview}
@@ -1808,9 +1917,9 @@ function PlayerShell({
       lessons={lessons}
       current={view.kind === 'lesson' ? view.lessonId : ''}
       preview={isPreview}
-      isLocked={isLocked}
+      isLocked={branching ? (i) => Boolean(jumpLocks[i]) : isLocked}
       isDone={(id) => doneIds.has(id)}
-      open={(lessonId) => openView({ kind: 'lesson', lessonId })}
+      open={jumpOpen}
     >
       {page}
     </JumpArea>

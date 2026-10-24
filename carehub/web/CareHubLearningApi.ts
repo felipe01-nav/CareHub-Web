@@ -12,6 +12,7 @@ import {
   cloneBlocks3,
   normalizeBlocks3,
 } from './CareHubLearningBlocks3';
+import { branchProblems, readBranchFields } from './CareHubLearningBranching';
 import {
   blankLabeledGraphic,
   gradeInteract,
@@ -211,6 +212,10 @@ export interface Lesson {
   title: string;
   min_seconds: number;
   blocks: Block[];
+  /** Side lesson: people only get to it from a button or link (see CareHubLearningBranching). */
+  branch?: boolean;
+  /** "After this lesson": another lesson's id, or "choose" (no Next button). Missing = the next lesson. */
+  then?: string;
 }
 
 export interface Quiz {
@@ -677,6 +682,7 @@ export function normalizeLesson(raw: unknown, index = 0): Lesson {
     blocks: arr(o.blocks)
       .map(normalizeBlock)
       .filter((b): b is Block => b !== null),
+    ...readBranchFields(o),
   };
 }
 
@@ -1697,6 +1703,7 @@ export function validateContent(c: Content): string[] {
   }
 
   blocks3LinkProblems(c, out, serverLessonName);
+  branchProblems(c, out, serverLessonName);
   if (repeated) out.push('Two parts of this course share the same id. Delete the copy and add it again.');
   return Array.from(new Set(out));
 }

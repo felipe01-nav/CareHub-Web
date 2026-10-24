@@ -1362,6 +1362,7 @@ EXTRA_FILES[HERE / "web" / "CareHubLearningOverview.tsx"] = "src/components/care
 EXTRA_FILES[HERE / "web" / "CareHubLearningTemplates.tsx"] = "src/components/carehub/CareHubLearningTemplates.tsx"  # Studio → block templates
 EXTRA_FILES[HERE / "web" / "CareHubLearningDrafts.tsx"] = "src/components/carehub/CareHubLearningDrafts.tsx"  # review links + draft comments
 EXTRA_FILES[HERE / "web" / "CareHubLearningQbank.tsx"] = "src/components/carehub/CareHubLearningQbank.tsx"  # surveys, question banks, drag matching
+EXTRA_FILES[HERE / "web" / "CareHubLearningBranching.tsx"] = "src/components/carehub/CareHubLearningBranching.tsx"  # side lessons + "After this lesson"
 EXTRA_FILES[HERE / "web" / "CareHubLearningPaths.tsx"] = "src/components/carehub/CareHubLearningPaths.tsx"  # learning paths (paths3)
 
 if __name__ == "__main__":
