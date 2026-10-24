@@ -96,15 +96,6 @@ function ordering(prompt: string, list: string[], extra: Partial<Question> = {})
   return { ...question('ordering', prompt, [], extra), items: list.map((text) => ({ id: newId('o'), text })) };
 }
 
-/** Click the right spot: one of Studio's sample pictures, and the right spots as [x, y, width, height] in percent. */
-function hotspot(prompt: string, picture: number, alt: string, spots: [x: number, y: number, w: number, h: number][], extra: Partial<Question> = {}): Question {
-  return {
-    ...question('hotspot', prompt, [], extra),
-    image: { url: sample(picture), alt },
-    spots: spots.map(([x, y, w, h]) => ({ id: newId('h'), x, y, w, h })),
-  };
-}
-
 /** One of the sample pictures Studio offers (1–6). */
 function sample(n: number) {
   return `/covers/m_cover_image_${n}.png`;
@@ -261,16 +252,10 @@ function billingBasics(): Content {
         ]),
       }),
       b('knowledge_check', {
-        question: hotspot(
-          'Pretend this picture is a printed Brightside invoice. Click where you’d find the invoice number.',
-          4,
-          'A colorful abstract picture standing in for a printed invoice',
-          [[55, 0, 45, 35]],
-          {
-            feedback_correct: 'Yes — top right, starting with BB-.',
-            feedback_incorrect: 'Look again: it’s at the top right and starts with BB-.',
-          }
-        ),
+        question: single('Where do you find the invoice number?', ['At the bottom, next to the total', 'At the top right, starting with BB-', 'On the delivery note only'], 1, {
+          feedback_correct: 'Yes — top right, starting with BB-.',
+          feedback_incorrect: 'Look again: it’s at the top right and starts with BB-.',
+        }),
       }),
       b('continue', { label: 'Continue', require_complete: true }),
       b('flashcards', {
