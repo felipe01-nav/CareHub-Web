@@ -1,10 +1,40 @@
 // CareHub: small shared pieces for the new windows and settings panels.
-import { useEffect } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { ReactNode } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
+
+// Open dialogs, newest last. Only the top one keeps Tab inside (e.g. a confirm opened over another dialog).
+const openModals: HTMLElement[] = [];
+const TABBABLE =
+  'a[href], area[href], button, input:not([type="hidden"]), select, textarea, iframe, audio[controls], video[controls], summary, [tabindex], [contenteditable]';
+
+/** A radio group is one Tab stop. */
+function stopGroup(el: HTMLElement): HTMLElement | string {
+  return el instanceof HTMLInputElement && el.type === 'radio' && el.name ? `radio:${el.name}` : el;
+}
+
+/** What Tab can reach in a dialog, in page order: one per radio group (its checked radio, else the first). */
+function tabStops(box: HTMLElement) {
+  const all = Array.from(box.querySelectorAll<HTMLElement>(TABBABLE)).filter(
+    (el) =>
+      (el.tabIndex >= 0 || (el.isContentEditable && !el.hasAttribute('tabindex'))) &&
+      !el.matches(':disabled') &&
+      el.getClientRects().length > 0 &&
+      getComputedStyle(el).visibility !== 'hidden'
+  );
+
+  return all.filter((el) => {
+    const group = stopGroup(el);
+
+    if (typeof group !== 'string') return true;
+    const radios = all.filter((o) => stopGroup(o) === group) as HTMLInputElement[];
+
+    return el === (radios.find((r) => r.checked) || radios[0]);
+  });
+}
 
 export function CareHubModal({
   children,
@@ -21,6 +51,12 @@ export function CareHubModal({
   footer?: ReactNode;
   testId?: string;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // Where focus was when the dialog opened (read while rendering, before anything inside takes focus).
+  const [opener] = useState(() => document.activeElement);
+  const back = useRef(opener);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -29,6 +65,59 @@ export function CareHubModal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+
+    if (!box) return undefined;
+    // Opened in place of another dialog (that one has closed and given focus back), or focus was nowhere when it
+    // opened (e.g. the button pressed went busy): remember where focus is now instead.
+    const was = back.current;
+
+    if ((!was?.isConnected || was === document.body) && !box.contains(document.activeElement)) back.current = document.activeElement;
+    openModals.push(box);
+    return () => {
+      const i = openModals.indexOf(box);
+
+      if (i >= 0) openModals.splice(i, 1);
+      // Give focus back to where the dialog was opened from — only if it would otherwise be lost (on the page body
+      // or still in this dialog, which is about to go) and that place is still on the page. Runs before the dialog
+      // leaves the page, so focus the app moves on purpose afterwards (e.g. to a new block) still wins.
+      const now = document.activeElement;
+      const to = back.current;
+
+      if ((!now || now === document.body || box.contains(now)) && to instanceof HTMLElement && to !== document.body && to.isConnected) {
+        to.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  // Move focus into the dialog, unless something inside already took it (autoFocus, or an effect: this one runs
+  // after the children's). The dialog box itself gets it, so screen readers read the title first.
+  useEffect(() => {
+    const box = boxRef.current;
+
+    if (box && !box.contains(document.activeElement)) box.focus({ preventScroll: true });
+  }, []);
+
+  // Tab and Shift+Tab wrap round inside the top dialog. Keys from menus that a dialog opens in a portal (outside
+  // this box) arrive here through React too: those are left alone, and focus is never pulled back from outside.
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const box = boxRef.current;
+    const at = e.target as HTMLElement;
+
+    if (e.key !== 'Tab' || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || !box || !box.contains(at)) return;
+    if (openModals[openModals.length - 1] !== box) return;
+    const stops = tabStops(box);
+    const others = stops.filter((el) => stopGroup(el) !== stopGroup(at));
+    const ahead = e.shiftKey
+      ? others.some((el) => el.compareDocumentPosition(at) & Node.DOCUMENT_POSITION_FOLLOWING)
+      : others.some((el) => at.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    if (ahead) return;
+    e.preventDefault();
+    (e.shiftKey ? stops[stops.length - 1] : stops[0])?.focus();
+  };
 
   return createPortal(
     <div
@@ -39,16 +128,22 @@ export function CareHubModal({
       }}
     >
       <div
+        ref={boxRef}
         className={cn(
-          'carehub-modal flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[14px] bg-background-primary shadow-xl',
+          'carehub-modal flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[14px] bg-background-primary shadow-xl outline-none',
           wide === 'xl' ? 'max-w-[1100px]' : wide ? 'max-w-[720px]' : 'max-w-[480px]'
         )}
         role='dialog'
         aria-modal='true'
+        aria-labelledby={title !== undefined ? titleId : undefined}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
       >
         {title !== undefined && (
           <div className='flex items-center gap-2 border-b border-border-primary px-4 py-3'>
-            <div className='min-w-0 flex-1 truncate text-base font-semibold'>{title}</div>
+            <div id={titleId} className='min-w-0 flex-1 truncate text-base font-semibold'>
+              {title}
+            </div>
             <button
               type='button'
               aria-label='Close'
@@ -72,7 +167,7 @@ export function ChSection({ title, hint, children, right }: { title: ReactNode; 
     <section className='mb-6'>
       <div className='mb-2 flex items-end gap-2'>
         <div className='min-w-0 flex-1'>
-          <div className='text-sm font-semibold text-text-primary'>{title}</div>
+          <h2 className='m-0 text-sm font-semibold text-text-primary'>{title}</h2>
           {hint && <div className='mt-0.5 text-xs text-text-tertiary'>{hint}</div>}
         </div>
         {right}
@@ -134,6 +229,7 @@ export function ChCard({ label, value, hint }: { label: string; value: ReactNode
 export function ChNote({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warn' | 'error' | 'ok' }) {
   return (
     <div
+      role={tone === 'error' ? 'alert' : undefined}
       className={cn(
         'rounded-[10px] px-3 py-2 text-xs',
         tone === 'info' && 'bg-fill-content-hover text-text-secondary',

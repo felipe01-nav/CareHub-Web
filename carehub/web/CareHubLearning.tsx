@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 
 import { carehubCan, formatWhen, lastWorkspaceId, UUID_RE, useCareHubMe } from './CareHubCore';
 import { formatMinutes, isFinished, lapi, LEARNING_PATH, learningNotLive, lErrorText, plural, statusInfo } from './CareHubLearningApi';
+import { learningTitle, usePageTitle } from './CareHubLearningA11y';
 import { AssignedToYou, AssignStyle, expiredText, LearningAssignPage, TakeAgain, useAssignedCourses } from './CareHubLearningAssign';
 import { assignedDone } from './CareHubLearningAssignApi';
 import { Chip, CourseCover, LearningStyle, ProgressBar } from './CareHubLearningBlocks';
@@ -349,6 +350,17 @@ const STUDIO_ONLY = 'Studio is for people with the “Build courses” permissio
 const ASSIGN_ONLY = 'Assigning courses is for people with the “Assign courses” permission. Ask an admin if you need it.';
 const REPORTS_ONLY = 'Reports are for people with the “See course reports” or “Build courses” permission. Ask an admin if you need it.';
 
+/** What the browser tab says on each screen (My learning stays "Learning · Care Hub"; the player adds the course name). */
+const SCREEN_TITLES: [RegExp, string][] = [
+  [/^\/studio(\/|$)/, 'Studio'],
+  [/^\/reports(\/|$)/, 'Reports'],
+  [/^\/assign(\/|$)/, 'Assign'],
+  [/^\/certificates(\/|$)/, 'My certificates'],
+  [/^\/certificate\//, 'Certificate'],
+  [/^\/verify(\/|$)/, 'Verify a certificate'],
+  [/^\/review\//, 'Review a draft'],
+];
+
 function OnlyFor({ known, allowed, message, children }: { known: boolean; allowed: boolean; message: string; children: ReactNode }) {
   if (!known) return <div className='text-sm text-text-tertiary'>Loading…</div>;
   if (!allowed) return <ChNote>{message}</ChNote>;
@@ -411,9 +423,7 @@ function LearningRoutes() {
   const inReports = /^\/reports(\/|$)/.test(rest);
   const inAssign = /^\/assign(\/|$)/.test(rest);
 
-  useEffect(() => {
-    document.title = 'Learning · Care Hub';
-  }, []);
+  usePageTitle(/^\/course\//.test(rest) ? null : learningTitle(SCREEN_TITLES.find(([re]) => re.test(rest))?.[1] || ''));
 
   if (me?.is_guest) {
     return (

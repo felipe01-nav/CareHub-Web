@@ -478,7 +478,7 @@ function SaveTemplateDialog({
         </div>
         <ChNote>Everyone who builds courses in this workspace can use it.</ChNote>
         {shown && (
-          <div id={`${uid}-problem`} role='alert'>
+          <div id={`${uid}-problem`}>
             <ChNote tone='error'>{shown}</ChNote>
           </div>
         )}
@@ -715,7 +715,7 @@ function RenameForm({ templates, template, onDone }: { templates: BlockTemplates
         }}
       />
       {problem && (
-        <div id={`${uid}-problem`} role='alert'>
+        <div id={`${uid}-problem`}>
           <ChNote tone='error'>{problem}</ChNote>
         </div>
       )}
@@ -775,11 +775,7 @@ function DeleteAsk({
       <p id={`${uid}-ask`} className='text-xs'>
         Delete this template? Courses that used it keep their blocks.
       </p>
-      {problem && (
-        <div role='alert'>
-          <ChNote tone='error'>{problem}</ChNote>
-        </div>
-      )}
+      {problem && <ChNote tone='error'>{problem}</ChNote>}
       <div className='flex flex-wrap justify-end gap-2'>
         <Button ref={cancel} type='button' size='sm' variant='outline' className='cht-focus' onClick={onCancel}>
           Cancel
@@ -892,11 +888,7 @@ export function TemplatesSection({ templates, onAdd }: { templates: BlockTemplat
         )}
       </div>
 
-      {problem && (
-        <div role='alert'>
-          <ChNote tone='error'>{problem}</ChNote>
-        </div>
-      )}
+      {problem && <ChNote tone='error'>{problem}</ChNote>}
       {templates.status === 'error' && !list.length && (
         <ChNote tone='error'>
           <div className='flex flex-wrap items-center gap-2'>

@@ -931,7 +931,7 @@ export function SurveyView({
             })}
           </div>
           {error && (
-            <div className='mt-3' role='alert'>
+            <div className='mt-3'>
               <ChNote tone='error'>{error}</ChNote>
             </div>
           )}

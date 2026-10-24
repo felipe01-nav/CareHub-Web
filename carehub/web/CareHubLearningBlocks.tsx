@@ -1,6 +1,6 @@
 // CareHub Learning: how course blocks look. Shared by the course player and the Studio preview.
 // Text supports a tiny markdown subset (**bold**, *italic*, [link](https://…), line breaks) — never raw HTML.
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type { MouseEvent, ReactNode } from 'react';
 
@@ -20,6 +20,7 @@ import {
   presetInfo,
   urlAllowed,
 } from './CareHubLearningApi';
+import { firstControl, focusSoon, tabKey } from './CareHubLearningA11y';
 import { Blocks3View, JumpLink } from './CareHubLearningBlocks3';
 import { coerceInteractAnswer, InteractQuestionView, isInteractKind, LabeledGraphicView } from './CareHubLearningInteract';
 import { MatchCards, pickedFeedback, SurveyView } from './CareHubLearningQbank';
@@ -62,8 +63,8 @@ export const LEARNING_CSS = `
 :root[data-dark-mode='true'] .chl-box-success,:root[data-dark-mode='true'] .chl-good{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.38)}
 .chl-right{border-color:#22c55e}
 .chl-wrong{border-color:#f59e0b}
-.chl-mark-right{color:#16a34a}
-.chl-mark-wrong{color:#d97706}
+.chl-mark-right{color:#15803d}
+.chl-mark-wrong{color:#b45309}
 :root[data-dark-mode='true'] .chl-mark-right{color:#4ade80}
 :root[data-dark-mode='true'] .chl-mark-wrong{color:#fbbf24}
 .chl-them{background:rgba(127,127,127,.13)}
@@ -87,6 +88,12 @@ export const LEARNING_CSS = `
 .chl-drop-target{outline:2px dashed #2563eb;outline-offset:4px}
 :root[data-dark-mode='true'] .chl-drop-target{outline-color:#60a5fa}
 @media (prefers-reduced-motion: reduce){.chl-flash-inner,.chl-fill{transition:none}}
+/* Readable greys and placeholders (WCAG 1.4.3): the theme's light #a3a3a3 is 2.5:1 on white, dark #737373 4.2:1. Can go once the app theme is fixed. */
+.carehub-learning,.carehub-modal{--text-secondary:#666666;--text-tertiary:#666666;--text-placeholder:#666666}
+:root[data-dark-mode='true'] .carehub-learning,:root[data-dark-mode='true'] .carehub-modal{--text-secondary:#a3a3a3;--text-tertiary:#8a8a8a;--text-placeholder:#8a8a8a}
+.carehub-learning ::placeholder,.carehub-modal ::placeholder{color:var(--text-placeholder);opacity:1}
+/* Keyboard focus ring for the shared Button, which has outline-none and no ring (WCAG 2.4.7). #body because tailwind's important: '#body' gives outline-none an id. */
+#body .carehub-learning [data-slot='button']:focus-visible,#body .carehub-modal [data-slot='button']:focus-visible{outline:2px solid var(--border-theme-thick);outline-offset:2px}
 `;
 
 export function LearningStyle() {
@@ -322,11 +329,14 @@ export function QuestionView({
                 </select>
                 {mark === 'wrong' && (
                   <div className='text-xs text-text-secondary'>
-                    <span className='chl-mark-wrong'>×</span> Answer: {rights.find((r) => r.token === want)?.text || '—'}
+                    <span className='chl-mark-wrong' role='img' aria-label='Not quite'>
+                      ×
+                    </span>{' '}
+                    Answer: {rights.find((r) => r.token === want)?.text || '—'}
                   </div>
                 )}
                 {mark === 'right' && (
-                  <span className='chl-mark-right text-sm' aria-label='Correct'>
+                  <span className='chl-mark-right text-sm' role='img' aria-label='Correct'>
                     ✓
                   </span>
                 )}
@@ -377,12 +387,12 @@ export function QuestionView({
                   )}
                 </span>
                 {mark === 'right' && (
-                  <span className='chl-mark-right' aria-label='Correct answer'>
+                  <span className='chl-mark-right' role='img' aria-label='Correct answer'>
                     ✓
                   </span>
                 )}
                 {mark === 'wrong' && (
-                  <span className='chl-mark-wrong' aria-label='Not the right answer'>
+                  <span className='chl-mark-wrong' role='img' aria-label='Not the right answer'>
                     ×
                   </span>
                 )}
@@ -1194,6 +1204,7 @@ function AccordionBlock({ block }: { block: BlockOf<'accordion'> }) {
 function TabsBlock({ block }: { block: BlockOf<'tabs'> }) {
   const items = block.items.filter((it) => it.title.trim() || it.text.trim());
   const [active, setActive] = useState(0);
+  const id = useId();
   const current = items[Math.min(active, items.length - 1)];
 
   if (!items.length || !current) return null;
@@ -1203,20 +1214,36 @@ function TabsBlock({ block }: { block: BlockOf<'tabs'> }) {
         {items.map((it, i) => (
           <button
             key={it.id}
+            id={`${id}-tab-${i}`}
             type='button'
             role='tab'
             aria-selected={it.id === current.id}
+            aria-controls={`${id}-panel`}
+            tabIndex={it.id === current.id ? 0 : -1}
             className={cn(
               'shrink-0 rounded-t-[8px] px-3 py-2 text-sm',
               it.id === current.id ? 'bg-fill-content-hover font-semibold text-text-primary' : 'text-text-secondary hover:text-text-primary'
             )}
             onClick={() => setActive(i)}
+            onKeyDown={(e) => {
+              const to = tabKey(e, i, items.length);
+
+              if (to === null) return;
+              setActive(to);
+              document.getElementById(`${id}-tab-${to}`)?.focus();
+            }}
           >
             {it.title.trim() || `Tab ${i + 1}`}
           </button>
         ))}
       </div>
-      <div role='tabpanel' className='px-4 py-3 text-[15px] leading-relaxed'>
+      <div
+        role='tabpanel'
+        id={`${id}-panel`}
+        aria-labelledby={`${id}-tab-${items.indexOf(current)}`}
+        tabIndex={0}
+        className='px-4 py-3 text-[15px] leading-relaxed'
+      >
         <RichText text={current.text} />
       </div>
     </div>
@@ -1338,9 +1365,10 @@ function KnowledgeCheck({ block, ctx }: { block: BlockOf<'knowledge_check'>; ctx
   const [answer, setAnswer] = useState<Answer | undefined>(() => (saved ? coerceAnswer(q, saved.answer) : undefined));
   const [checked, setChecked] = useState(Boolean(saved && saved.answer !== undefined));
   const correct = checked && gradeQuestion(q, answer);
+  const box = useRef<HTMLDivElement>(null);
 
   return (
-    <div className='rounded-[12px] border border-border-primary p-4'>
+    <div ref={box} className='rounded-[12px] border border-border-primary p-4'>
       <div className='mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary'>Knowledge check</div>
       <QuestionView
         q={q}
@@ -1363,7 +1391,16 @@ function KnowledgeCheck({ block, ctx }: { block: BlockOf<'knowledge_check'>; ctx
             <div className='mt-2 text-xs text-text-tertiary'>Capital letters count.</div>
           )}
           <div className='mt-3'>
-            <Button type='button' size='sm' variant='outline' onClick={() => setChecked(false)}>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              onClick={() => {
+                setChecked(false);
+                // The button goes away: focus moves back to the answers.
+                focusSoon(() => firstControl(box.current?.querySelector('fieldset')));
+              }}
+            >
               Try again
             </Button>
           </div>
@@ -1378,6 +1415,8 @@ function KnowledgeCheck({ block, ctx }: { block: BlockOf<'knowledge_check'>; ctx
               if (answer === undefined) return;
               setChecked(true);
               ctx.onKcAnswer(block, answer, gradeQuestion(q, answer));
+              // The button goes away: focus moves to the feedback, so screen readers read it out.
+              focusSoon(() => box.current?.querySelector(':scope > [role="status"]'));
             }}
           >
             Check answer
@@ -1396,11 +1435,16 @@ function ScenarioBlock({ block, ctx }: { block: BlockOf<'scenario'>; ctx: BlockC
   const [picked, setPicked] = useState<ScenarioChoice | null>(null);
   const [ended, setEnded] = useState(false);
   const reported = useRef(ctx.done.has(block.id));
+  // Buttons here replace themselves, so focus follows: reply → Continue → the next replies (or the end).
+  const nextButton = useRef<HTMLButtonElement>(null);
+  const replies = useRef<HTMLDivElement>(null);
+  const endBox = useRef<HTMLDivElement>(null);
   const step = steps.get(current);
 
   if (!block.steps.length) return ctx.preview ? <Placeholder>Add steps to this scenario.</Placeholder> : null;
   const finish = () => {
     setEnded(true);
+    focusSoon(() => endBox.current);
     if (!reported.current) {
       reported.current = true;
       ctx.onScenarioDone(block);
@@ -1414,7 +1458,10 @@ function ScenarioBlock({ block, ctx }: { block: BlockOf<'scenario'>; ctx: BlockC
     setHistory(nextHistory);
     setPicked(null);
     if (!picked.next || !steps.has(picked.next) || nextHistory.length > 200) finish();
-    else setCurrent(picked.next);
+    else {
+      setCurrent(picked.next);
+      focusSoon(() => firstControl(replies.current));
+    }
   };
 
   const restart = () => {
@@ -1422,6 +1469,7 @@ function ScenarioBlock({ block, ctx }: { block: BlockOf<'scenario'>; ctx: BlockC
     setPicked(null);
     setEnded(false);
     setCurrent(first);
+    focusSoon(() => firstControl(replies.current));
   };
 
   const good = history.filter((h) => h.choice.good).length;
@@ -1471,20 +1519,23 @@ function ScenarioBlock({ block, ctx }: { block: BlockOf<'scenario'>; ctx: BlockC
                 {bubble('you', picked.text, 'picked')}
                 <Feedback good={picked.good} title={picked.good ? 'Good choice' : 'Think about it'} text={picked.feedback} />
                 <div>
-                  <Button type='button' size='sm' onClick={goOn}>
+                  <Button ref={nextButton} type='button' size='sm' onClick={goOn}>
                     {picked.next && steps.has(picked.next) ? 'Continue' : 'See how it ends'}
                   </Button>
                 </div>
               </>
             ) : (
-              <div className='mt-1 flex flex-col gap-2'>
+              <div ref={replies} className='mt-1 flex flex-col gap-2'>
                 <div className='text-xs text-text-tertiary'>What do you say?</div>
                 {step.choices.map((c) => (
                   <button
                     key={c.id}
                     type='button'
                     className='rounded-[10px] border border-border-primary px-3 py-2.5 text-left text-sm hover:bg-fill-content-hover'
-                    onClick={() => setPicked(c)}
+                    onClick={() => {
+                      setPicked(c);
+                      focusSoon(() => nextButton.current);
+                    }}
                   >
                     <RichText text={c.text || '…'} />
                   </button>
@@ -1501,7 +1552,7 @@ function ScenarioBlock({ block, ctx }: { block: BlockOf<'scenario'>; ctx: BlockC
           </>
         )}
         {(ended || (!step && !picked)) && (
-          <div className='mt-1 rounded-[10px] bg-fill-content-hover px-3 py-3 text-sm'>
+          <div ref={endBox} className='mt-1 rounded-[10px] bg-fill-content-hover px-3 py-3 text-sm'>
             <div className='font-semibold'>
               <span aria-hidden='true'>🏁 </span>End of the scenario
             </div>
