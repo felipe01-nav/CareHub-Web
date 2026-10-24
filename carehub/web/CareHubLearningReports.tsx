@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ReactNode } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -16,6 +16,7 @@ import { formatDuration, isTransientError, LEARNING_PATH, learningNotLive, lErro
 // inside functions, never while the files are first loaded.
 import { assignCoursePath, certificatePath, groupPath, shortDate } from './CareHubLearningAssignApi';
 import { Chip, ProgressBar, RichText } from './CareHubLearningBlocks';
+import { LearningReportsOverview } from './CareHubLearningOverview';
 import { CareHubModal, ChCard, chInputClass, ChNote, ChSection } from './CareHubUi';
 
 import type { LearnStatus } from './CareHubLearningApi';
@@ -23,6 +24,8 @@ import type { LearnStatus } from './CareHubLearningApi';
 export const REPORTS_PATH = `${LEARNING_PATH}/reports`;
 export const PEOPLE_PATH = `${REPORTS_PATH}/people`;
 export const TEAMS_PATH = `${REPORTS_PATH}/teams`;
+/** The course list. The reports home (REPORTS_PATH) shows the Overview tab. */
+export const COURSES_PATH = `${REPORTS_PATH}?tab=courses`;
 
 const STUDIO_PATH = `${LEARNING_PATH}/studio`;
 const coursePath = (id: string) => `${REPORTS_PATH}/course/${id}`;
@@ -1034,10 +1037,11 @@ function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-function ReportsNav({ active }: { active: 'courses' | 'people' | 'teams' }) {
+function ReportsNav({ active }: { active: 'overview' | 'courses' | 'people' | 'teams' }) {
   const navigate = useNavigate();
   const items = [
-    { id: 'courses' as const, label: 'Courses', to: REPORTS_PATH },
+    { id: 'overview' as const, label: 'Overview', to: REPORTS_PATH },
+    { id: 'courses' as const, label: 'Courses', to: COURSES_PATH },
     { id: 'people' as const, label: 'People', to: PEOPLE_PATH },
     { id: 'teams' as const, label: 'Teams', to: TEAMS_PATH },
   ];
@@ -1207,7 +1211,17 @@ function assignedFor(c: CourseSummary, by: Map<string, TeamCourseStat>): { assig
   return by.get(c.id) ?? (c.status === 'published' ? { assigned: 0, overdue: 0 } : null);
 }
 
+/** The reports home: the Overview tab, or the course list with `?tab=courses`. */
 export function LearningReportsCourses({ workspaceId, canBuild }: { workspaceId: string; canBuild: boolean }) {
+  const { search } = useLocation();
+
+  if (new URLSearchParams(search).get('tab') === 'courses') {
+    return <ReportsCourseList workspaceId={workspaceId} canBuild={canBuild} />;
+  }
+  return <LearningReportsOverview workspaceId={workspaceId} nav={<ReportsNav active='overview' />} />;
+}
+
+function ReportsCourseList({ workspaceId, canBuild }: { workspaceId: string; canBuild: boolean }) {
   const navigate = useNavigate();
   const load = useCallback(() => reportsApi.courses(workspaceId), [workspaceId]);
   const { data, error, reload } = useLoad(load);
@@ -1532,7 +1546,7 @@ function courseCols(quiz: boolean, latest: number, showDue: boolean, openCert: (
 export function LearningReportCourse({ workspaceId, canBuild }: { workspaceId: string; canBuild: boolean }) {
   const { courseId = '' } = useParams();
 
-  if (!UUID_RE.test(courseId)) return <Navigate to={REPORTS_PATH} replace />;
+  if (!UUID_RE.test(courseId)) return <Navigate to={COURSES_PATH} replace />;
   return <CourseReportView key={courseId} workspaceId={workspaceId} courseId={courseId} canBuild={canBuild} />;
 }
 
@@ -1582,7 +1596,7 @@ function CourseReportView({ workspaceId, courseId, canBuild }: { workspaceId: st
   const showDue = Boolean(insights && insights.due.some((d) => d.due_ms !== null || d.overdue));
   const cols = useMemo(() => courseCols(quiz, latest, showDue, (code) => navigate(certificatePath(code))), [quiz, latest, showDue, navigate]);
 
-  const back = <BackLink label='All courses' onClick={() => navigate(REPORTS_PATH)} />;
+  const back = <BackLink label='All courses' onClick={() => navigate(COURSES_PATH)} />;
 
   if (!data) {
     return (
